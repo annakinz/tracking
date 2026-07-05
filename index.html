@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b1026">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Stratos</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header id="topbar">
+  <div class="brand">Stratos</div>
+  <div class="spacer"></div>
+  <button id="profileChip" class="chip" title="Switch profile">…</button>
+  <button id="settingsBtn" class="iconbtn" title="Settings">⚙︎</button>
+</header>
+
+<main id="views">
+
+  <!-- ============ DUMP ============ -->
+  <section id="view-dump" class="view">
+    <h1>Brain dump</h1>
+    <p class="hint">Anything, several things, one per line. Don't organize — that's my job.</p>
+    <textarea id="dumpText" placeholder="dentist for Kid 1 by friday&#10;milk, eggs, coffee&#10;plan summer trip&#10;insomnia"
+      autocapitalize="sentences" autocomplete="off"></textarea>
+    <button id="dumpBtn" class="primary big">Dump it</button>
+    <div id="dumpResults"></div>
+  </section>
+
+  <!-- ============ SIZE ============ -->
+  <section id="view-size" class="view">
+    <div id="sizeEmpty" class="empty">
+      <div class="empty-art">🫧</div>
+      <p>Nothing waiting to be sized.</p>
+      <p class="hint">Dump something, or open an item from a list to resize it.</p>
+    </div>
+    <div id="sizeStage" hidden>
+      <div id="strataBg"></div>
+      <div id="peerLayer"></div>
+      <div id="theBubble"><span id="bubbleLabel"></span></div>
+      <div id="rail"></div>
+      <div id="sizeHud">
+        <div id="stratumTitle"><b id="stratumNum"></b> <span id="stratumName"></span></div>
+        <div id="dimChips"></div>
+        <div class="hudrow">
+          <button id="skipBtn">Skip</button>
+          <button id="okBtn" class="primary">OK</button>
+        </div>
+        <div class="hint" id="sizeHint">Pinch, drag up/down, or scroll to size</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ LISTS ============ -->
+  <section id="view-lists" class="view">
+    <div class="filterbar" id="personFilter"></div>
+    <div class="filterbar small">
+      <select id="sortSel">
+        <option value="priority">Sort: Priority</option>
+        <option value="effort">Sort: Effort</option>
+        <option value="difficulty">Sort: Difficulty</option>
+        <option value="dread">Sort: Dread</option>
+        <option value="due">Sort: Due date</option>
+        <option value="new">Sort: Newest</option>
+      </select>
+      <select id="visSel">
+        <option value="all">All items</option>
+        <option value="shared">Shared only</option>
+        <option value="private">Private (mine)</option>
+      </select>
+      <label class="toggle"><input type="checkbox" id="showDone"> done</label>
+    </div>
+    <div id="listBody"></div>
+  </section>
+
+  <!-- ============ HOUSE ============ -->
+  <section id="view-house" class="view">
+    <h1>House</h1>
+    <div class="quickadd">
+      <input id="houseAdd" placeholder="Add: milk, sponges, fix the gate…" autocapitalize="none">
+      <button id="houseAddBtn" class="primary">Add</button>
+    </div>
+    <div id="houseBody"></div>
+  </section>
+
+  <!-- ============ SETTINGS ============ -->
+  <section id="view-settings" class="view">
+    <h1>Settings</h1>
+    <div id="settingsBody"></div>
+  </section>
+
+</main>
+
+<nav id="tabbar">
+  <button data-view="dump"  class="tab active"><span class="ticon">✍️</span>Dump</button>
+  <button data-view="size"  class="tab"><span class="ticon">🫧</span>Size<span id="inboxBadge" class="badge" hidden></span></button>
+  <button data-view="lists" class="tab"><span class="ticon">☰</span>Lists</button>
+  <button data-view="house" class="tab"><span class="ticon">🏠</span>House</button>
+</nav>
+
+<!-- item detail sheet -->
+<div id="sheetWrap" hidden>
+  <div id="sheetShade"></div>
+  <div id="sheet"></div>
+</div>
+
+<!-- first-run profile picker -->
+<div id="firstRun" hidden>
+  <div class="fr-card">
+    <h1>Who's this device for?</h1>
+    <p class="hint">Sets whose items are “mine” here. Switchable in settings.</p>
+    <div class="fr-btns">
+      <button class="primary big" data-profile="anna">Anna</button>
+      <button class="primary big" data-profile="ebbe">Ebbe</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
