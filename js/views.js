@@ -31,12 +31,12 @@ export function surfacedOf(items) {
       const ageDays = Math.floor((Date.now() - i.createdAt) / 86400e3);
       if (boost > 0) {
         const why = i.due
-          ? (boost >= 1.5 ? '🔥 due ' : '⏰ due ') + i.due
-          : '🔁 every ~' + i.loop.every + 'd — probably needed';
+          ? (boost >= 1.5 ? '⚑ due ' : '◷ due ') + i.due
+          : '↺ every ~' + i.loop.every + 'd — probably needed';
         return { i, why, w: 10 + boost };
       }
       if (dread !== null && dread >= 4 && ageDays >= 7)
-        return { i, why: '🌀 high dread · sitting ' + ageDays + ' days', w: dread + ageDays / 30 };
+        return { i, why: '◐ high dread · sitting ' + ageDays + ' days', w: dread + ageDays / 30 };
       return null;
     })
     .filter(Boolean)
@@ -114,7 +114,7 @@ export function initDump() {
     e.target.value = '';
     const label = document.querySelector('.photodump');
     label.classList.add('busy');
-    label.firstChild.textContent = '📷 Looking at the photo… ';
+    label.firstChild.textContent = '⊙ Looking at the photo… ';
     try {
       const dataUrl = await shrinkImage(f, 1200);
       const res = getKey() ? await agentPhotoTasks(dataUrl, $('#dumpText').value.trim()) : null;
@@ -137,18 +137,18 @@ export function initDump() {
       alert("Couldn't read that image.");
     }
     label.classList.remove('busy');
-    label.firstChild.textContent = '📷 Photo dump — point me at the mess ';
+    label.firstChild.textContent = '⊙ Photo dump — point me at the mess ';
   });
 }
 
 function renderDumpResults(items, viaAgent) {
   const box = $('#dumpResults');
-  const via = viaAgent ? '✨ filed by Gemini'
+  const via = viaAgent ? '✦ filed by Gemini'
     : getKey() ? 'filed by built-in rules (Gemini unreachable)'
     : 'filed by built-in rules — add a Gemini key in ⚙︎ Settings for smarter filing';
   box.innerHTML = '<div class="hint" style="margin-top:14px">Filed ' + items.length +
     (items.length === 1 ? ' item' : ' items') + ' <span style="opacity:.7">(' + via + ')</span>' +
-    ' — tap to correct me. Then head to <b>Size</b> 🫧</div>';
+    ' — tap to correct me. Then head to <b>Size</b>.</div>';
   for (const it of items) box.appendChild(itemCard(it));
 }
 
@@ -159,20 +159,20 @@ function itemCard(it) {
     '<div class="fc-title">' + esc(it.title) + '</div>' +
     '<div class="fc-chips">' +
       chip(typeIcon(it.type) + ' ' + it.type) +
-      chip('👤 ' + esc(memberName(it.scope))) +
-      chip('🏷 ' + esc(it.category)) +
-      (it.due ? chip('📅 ' + it.due) : '') +
-      (it.source ? chip('🏪 ' + esc(it.source)) : '') +
-      (it.loop?.every ? chip('🔁 ~' + it.loop.every + 'd loop') : '') +
+      chip(esc(memberName(it.scope))) +
+      chip(esc(it.category)) +
+      (it.due ? chip('due ' + it.due) : '') +
+      (it.source ? chip('@ ' + esc(it.source)) : '') +
+      (it.loop?.every ? chip('↺ ~' + it.loop.every + 'd loop') : '') +
       kidsChip(it) +
-      chip(it.visibility === 'private' ? '🔒 private' : '👥 shared') +
+      chip(it.visibility === 'private' ? 'private' : 'shared') +
     '</div>';
   el.onclick = () => openItem(it.id);
   return el;
 }
 
 const chip = (t) => '<span class="minichip">' + t + '</span>';
-const typeIcon = (t) => ({ task: '☑️', issue: '🌀', supply: '🧺', goal: '🎯' }[t] || '•');
+const typeIcon = (t) => ({ task: '☐', issue: '◐', supply: '◇', goal: '◎' }[t] || '•');
 
 function kidsChip(i) {
   const kids = childrenOf(i.id);
@@ -219,7 +219,7 @@ export function renderLists() {
   body.innerHTML = '';
 
   if (!active.length && !done.length) {
-    body.innerHTML = '<div class="empty"><div class="empty-art">☁️</div><p>Nothing here yet. Dump something!</p></div>';
+    body.innerHTML = '<div class="empty"><div class="empty-art">○</div><p>Nothing here yet. Dump something!</p></div>';
     return;
   }
 
@@ -227,7 +227,7 @@ export function renderLists() {
   if (inbox.length) {
     const btn = document.createElement('button');
     btn.className = 'primary wide';
-    btn.textContent = '🫧 Size ' + inbox.length + ' new item' + (inbox.length > 1 ? 's' : '');
+    btn.textContent = '◯ Size ' + inbox.length + ' new item' + (inbox.length > 1 ? 's' : '');
     btn.onclick = () => { window.stratosGoto('size'); };
     body.appendChild(btn);
   }
@@ -235,7 +235,7 @@ export function renderLists() {
   if (issues.length) {
     const wb = document.createElement('button');
     wb.className = 'wb-chip' + (wellbeingOpen ? ' open' : '');
-    wb.textContent = '🌀 wellbeing · ' + issues.length;
+    wb.textContent = '☾ wellbeing · ' + issues.length;
     wb.onclick = () => { wellbeingOpen = !wellbeingOpen; renderLists(); };
     body.appendChild(wb);
     if (wellbeingOpen) {
@@ -253,7 +253,7 @@ export function renderLists() {
   if (surfaced.length) {
     const h = document.createElement('div');
     h.className = 'group-head surfaced-head';
-    h.textContent = '👁 surfacing now';
+    h.textContent = '✦ surfacing now';
     body.appendChild(h);
     for (const s of surfaced) {
       const row = itemRow(s.i, sort, { noDue: true });
@@ -306,15 +306,15 @@ function itemRow(i, sort, opts = {}) {
     '<span class="row-main"><span class="row-title">' + esc(i.title) + '</span>' +
     '<span class="row-chips">' +
       (i.scope !== state.profile ? chip(esc(memberName(i.scope))) : '') +
-      (i.due && !opts.noDue ? chip((boost >= 1.5 ? '🔥 ' : boost > 0 ? '⏰ ' : '📅 ') + i.due) : '') +
-      (i.source ? chip('🏪 ' + esc(i.source)) : '') +
-      (i.loop?.every && !opts.noDue ? chip('🔁 ~' + i.loop.every + 'd') : '') +
+      (i.due && !opts.noDue ? chip((boost >= 1.5 ? '⚑ ' : boost > 0 ? '◷ ' : 'due ') + i.due) : '') +
+      (i.source ? chip('@ ' + esc(i.source)) : '') +
+      (i.loop?.every && !opts.noDue ? chip('↺ ~' + i.loop.every + 'd') : '') +
       (kidsChip(i)) +
-      (i.notes || (i.media || []).length ? chip('📎') : '') +
-      (i.visibility === 'private' ? chip('🔒') : '') +
+      (i.notes || (i.media || []).length ? chip('✎') : '') +
+      (i.visibility === 'private' ? chip('private') : '') +
       (i.status === 'inbox' ? chip('unsized') : '') +
     '</span></span>' +
-    '<span class="row-check" data-check>' + (i.status === 'done' ? '↩︎' : '✓') + '</span>';
+    '<span class="row-check" data-check>' + (i.status === 'done' ? '↺' : '✓') + '</span>';
   el.onclick = (e) => {
     if (e.target.closest('[data-check]')) {
       markDone(i.id, i.status !== 'done');
@@ -362,7 +362,7 @@ export function renderHouse() {
     for (const s of ['all', ...sources]) {
       const b = document.createElement('button');
       b.className = 'chip' + (houseSourceVal === s ? ' on' : '');
-      b.textContent = s === 'all' ? 'Everywhere' : '🏪 ' + s;
+      b.textContent = s === 'all' ? 'Everywhere' : '@ ' + s;
       b.onclick = () => { houseSourceVal = s; renderHouse(); };
       bar.appendChild(b);
     }
@@ -404,7 +404,7 @@ export function renderHouse() {
     }
   }
   if (!active.length && !done.length) {
-    body.innerHTML = '<div class="empty"><div class="empty-art">🏠</div><p>Add groceries, supplies, house tasks…</p></div>';
+    body.innerHTML = '<div class="empty"><div class="empty-art">⌂</div><p>Add groceries, supplies, house tasks…</p></div>';
   }
 }
 
@@ -509,21 +509,21 @@ export function openSheet(id) {
         (i.loop?.every ?? '') + '"> days' +
         (i.loop?.auto && i.loop?.every ? ' <span class="hint">(learned)</span>' : '') + '</label>' +
     '</div>' +
-    '<button id="shVis" class="chip big-chip">' + (i.visibility === 'private' ? '🔒 Private (only me)' : '👥 Shared with Ebbe & me') + '</button>' +
-    (i.due ? '<a class="chip big-chip cal" target="_blank" rel="noopener" href="' + gcalUrl(i) + '">📆 Add to Google Calendar</a>' : '') +
+    '<button id="shVis" class="chip big-chip">' + (i.visibility === 'private' ? 'Private — only me' : 'Shared with Ebbe & me') + '</button>' +
+    (i.due ? '<a class="chip big-chip cal" target="_blank" rel="noopener" href="' + gcalUrl(i) + '">↗ Add to Google Calendar</a>' : '') +
     '<div class="group-head">notes</div>' +
     '<textarea id="shNotes" placeholder="Notes, links, anything — paste a URL and it becomes a chip below">' + esc(i.notes || '') + '</textarea>' +
     '<div id="shLinks" class="linkrow">' + linkChips(i.notes) + '</div>' +
     '<div class="group-head">photos</div>' +
     '<div class="mediagrid" id="shMedia"></div>' +
-    '<label class="chip addphoto">📷 Add photo<input type="file" id="shPhoto" accept="image/*" hidden></label>' +
+    '<label class="chip addphoto">⊙ Add photo<input type="file" id="shPhoto" accept="image/*" hidden></label>' +
     '<div class="group-head">steps</div>' +
     '<div id="shKids"></div>' +
     '<div class="quickadd subadd"><input id="shSubInput" placeholder="Break it into steps…">' +
     '<button id="shSubAdd" class="chip">Add</button></div>' +
     '<div class="dimrows">' + dimRows + '</div>' +
     '<div class="sheet-actions">' +
-      '<button id="shDone" class="primary">' + (i.status === 'done' ? '↩︎ Not done' : '✓ Done') + '</button>' +
+      '<button id="shDone" class="primary">' + (i.status === 'done' ? '↺ Not done' : '✓ Done') + '</button>' +
       '<button id="shDelete" class="danger">Delete</button>' +
     '</div>';
 
@@ -569,7 +569,7 @@ export function openSheet(id) {
   let visibility = i.visibility;
   $('#shVis').onclick = () => {
     visibility = visibility === 'private' ? 'shared' : 'private';
-    $('#shVis').textContent = visibility === 'private' ? '🔒 Private (only me)' : '👥 Shared with Ebbe & me';
+    $('#shVis').textContent = visibility === 'private' ? 'Private — only me' : 'Shared with Ebbe & me';
   };
 
   const commit = () => {
@@ -692,7 +692,7 @@ function renderSheetKids(i) {
 export function renderSettings() {
   const body = $('#settingsBody');
   const famRows = state.family.filter(f => f.id !== 'house').map(f =>
-    '<label class="famrow">' + (f.user ? '👤' : '🧒') +
+    '<label class="famrow">' + (f.user ? '•' : '◦') +
     ' <input data-fam="' + f.id + '" value="' + esc(f.name) + '"></label>').join('');
 
   body.innerHTML =
@@ -701,7 +701,7 @@ export function renderSettings() {
     '<button id="setSwitch" class="chip">switch</button></div>' +
     '<div class="group-head">family</div>' + famRows +
     '<div class="group-head">agent</div>' +
-    '<label class="famrow">🔑 <input id="setGemini" type="password" placeholder="Gemini API key (free at aistudio.google.com/apikey)" value="' + esc(getKey()) + '"></label>' +
+    '<label class="famrow"><input id="setGemini" type="password" placeholder="Gemini API key (free at aistudio.google.com/apikey)" value="' + esc(getKey()) + '"></label>' +
     '<p class="hint">With a key, dumps are filed by Gemini (free tier, called straight from this device — the key never leaves it and is not included in exports). Without one, built-in rules do the filing. Your corrections teach both.</p>' +
     '<div class="group-head">household notes for the agent</div>' +
     '<textarea id="setNotes" placeholder="Facts the agent should know, e.g. “blue IKEA + rainbow bags = clean laundry to put away; bamboo baskets = dirty laundry”">' + esc(state.agentNotes || '') + '</textarea>' +

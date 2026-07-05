@@ -66,8 +66,7 @@ a { color: var(--accent); text-decoration: none; }
   transition: color .2s;
 }
 .tab.active { color: var(--ink); }
-.ticon { font-size: 21px; filter: saturate(.75) opacity(.85); transition: filter .2s; }
-.tab.active .ticon { filter: none; }
+.ticon { font-size: 22px; font-weight: 600; line-height: 1; }
 .badge {
   position: absolute; top: 7px; right: calc(50% - 27px);
   background: var(--accent2); color: #14092b; border-radius: 10px;
@@ -107,7 +106,7 @@ h1 { font-family: var(--serif); font-weight: 600; font-size: 27px; letter-spacin
 .primary.wide { width: 100%; margin: 10px 0 16px; }
 .danger { color: var(--danger); }
 .empty { text-align: center; padding: 64px 20px; color: var(--dim); }
-.empty-art { font-size: 50px; margin-bottom: 12px; filter: saturate(.7); }
+.empty-art { font-size: 50px; margin-bottom: 12px; opacity: .5; }
 .group-head {
   color: var(--dim); text-transform: uppercase; letter-spacing: .16em;
   font-size: 10.5px; font-weight: 700; margin: 22px 0 8px;
