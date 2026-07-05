@@ -1,0 +1,7 @@
+# Never commit app data: exports contain the family's items, notes,
+# corrections history, and inline photos.
+stratos-export*.json
+*-export.json
+
+node_modules/
+.DS_Store

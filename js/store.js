@@ -22,8 +22,8 @@ function freshState() {
     family: [
       { id: 'anna', name: 'Anna', user: true },
       { id: 'ebbe', name: 'Ebbe', user: true },
-      { id: 'kid1', name: 'Kid 1' },
-      { id: 'kid2', name: 'Kid 2' },
+      { id: 'kid1', name: 'Auriea' },
+      { id: 'kid2', name: 'Kiva' },
       { id: 'house', name: 'House' },
     ],
     dims,
