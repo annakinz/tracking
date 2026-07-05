@@ -18,6 +18,25 @@ const CATEGORY_RULES = [
   { cat: 'planning', re: /\b(plan|book|schedule|reserve|trip|vacation|flight|hotel|birthday|party|gift|present|holiday)\b/i },
 ];
 
+// Where things are typically bought/ordered — detected in dump text,
+// learnable via corrections, filterable in the House view.
+const SOURCES = {
+  'netto': 'Netto', 'føtex': 'Føtex', 'fotex': 'Føtex', 'rema': 'Rema 1000',
+  'bilka': 'Bilka', 'lidl': 'Lidl', 'aldi': 'Aldi', 'meny': 'Meny',
+  'brugsen': 'Brugsen', 'coop': 'Coop', 'irma': 'Irma',
+  'amazon': 'Amazon', 'wolt': 'Wolt', 'nemlig': 'Nemlig',
+  'apotek': 'Apotek', 'pharmacy': 'Apotek', 'matas': 'Matas',
+  'ikea': 'IKEA', 'bauhaus': 'Bauhaus', 'jem og fix': 'Jem & Fix',
+  'harald nyborg': 'Harald Nyborg', 'normal': 'Normal',
+};
+
+export function detectSource(t) {
+  for (const [k, name] of Object.entries(SOURCES)) {
+    if (new RegExp('\\b' + k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(t)) return name;
+  }
+  return null;
+}
+
 const TASK_VERBS = /^(buy|call|email|text|fix|schedule|book|pay|clean|make|send|sign|register|return|plan|order|pick|get|take|bring|find|research|renew|cancel|update|write|ask|check|drop|set|finish|start|organize|declutter|print|fill|submit|read|review|prep|prepare|install|replace|water|walk|wash|sell|donate|remind|rsvp|look)\b/i;
 
 const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
@@ -144,11 +163,16 @@ export function classifyOne(raw) {
   }
 
   let visibility = 'shared'; // household default; learning can flip it
+  let source = detectSource(t);
+  if (source && !isGrocery(t) && !matchSupply(t) && type === 'task') {
+    // "order dog food on wolt" style lines are usually purchases
+    if (/\b(order|buy|get|pick up)\b/.test(t)) category = category === 'general' ? 'shopping' : category;
+  }
 
   // learned corrections override everything (that's the point):
   // exact phrase memory first (one correction is enough), then
   // token generalization (needs corroboration to beat the rules)
-  for (const field of ['type', 'category', 'scope', 'visibility']) {
+  for (const field of ['type', 'category', 'scope', 'visibility', 'source']) {
     const ex = exactGuess(field, raw);
     const lg = ex ? null : learnedGuess(field, toks, 2);
     const v = ex || (lg && lg.value);
@@ -156,13 +180,14 @@ export function classifyOne(raw) {
       if (field === 'type') type = v;
       else if (field === 'category') category = v;
       else if (field === 'scope') scope = v;
+      else if (field === 'source') source = v;
       else visibility = v;
     }
   }
 
   const title = raw.trim().replace(/\s+/g, ' ').replace(/^(.)/, c => c.toUpperCase());
 
-  return { raw, title, type, scope, category, visibility, due, dimension };
+  return { raw, title, type, scope, category, visibility, due, dimension, source };
 }
 
 export function defaultDimension(item) {

@@ -45,6 +45,8 @@ Rules:
 - "due": ISO date (YYYY-MM-DD) only if the text implies a deadline, else "".
 - "visibility": "private" only if it's clearly personal/sensitive or a gift/surprise
   for another family member; otherwise "shared".
+- "source": where it's bought/ordered when stated or strongly implied (e.g. Netto,
+  Føtex, Rema 1000, Bilka, Lidl, Amazon, Wolt, Nemlig, Apotek, IKEA), else "".
 - "raw": the exact fragment of the dump this item came from.
 ${corrections ? '\nThe user has corrected past filings — follow these patterns:\n' + corrections : ''}
 
@@ -66,6 +68,7 @@ const RESPONSE_SCHEMA = {
       category: { type: 'STRING' },
       visibility: { type: 'STRING', enum: ['shared', 'private'] },
       due: { type: 'STRING' },
+      source: { type: 'STRING' },
     },
     required: ['title', 'type', 'scope', 'category', 'visibility'],
   },
@@ -87,10 +90,11 @@ function sanitize(o) {
     category: (o.category || 'general').toLowerCase().trim(),
     visibility: o.visibility === 'private' ? 'private' : 'shared',
     due: /^\d{4}-\d{2}-\d{2}$/.test(o.due || '') ? o.due : null,
+    source: (o.source || '').trim() || null,
     dimension: TYPE_DIM[type],
   };
   // the user's own exact-phrase corrections beat the model
-  for (const field of ['type', 'category', 'scope', 'visibility']) {
+  for (const field of ['type', 'category', 'scope', 'visibility', 'source']) {
     const ex = exactGuess(field, c.raw);
     if (ex) c[field] = ex;
   }

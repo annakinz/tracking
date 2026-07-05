@@ -1,6 +1,6 @@
 // App shell: navigation, profile picker, badge, service worker.
 
-import { state, save, inboxItems, memberName } from './store.js';
+import { state, save, inboxItems, memberName, tickLoops } from './store.js';
 import { initSizer, openSizer } from './bubbles.js';
 import { initDump, initHouse, renderLists, renderHouse, renderSettings, renderDumpSurface, allSurfaced } from './views.js';
 
@@ -8,6 +8,7 @@ const $ = (s) => document.querySelector(s);
 let current = 'dump';
 
 function goto(view) {
+  tickLoops(); // reawaken loop items whose cycle is coming due
   current = view;
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
   $('#view-' + view).classList.add('active');

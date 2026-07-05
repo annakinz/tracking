@@ -127,6 +127,7 @@ function peersOf(stratumIdx) {
 }
 
 function render() {
+  if (!item) return; // stray gestures on an empty stage
   const strata = state.dims[dim].strata;
   const n = strata.length;
   u = Math.max(0.02, Math.min(n - 0.02, u));
@@ -251,6 +252,7 @@ function dist(touches) {
 // ---------- commit / skip ----------
 
 function commit() {
+  if (!item) return;
   const strata = state.dims[dim].strata;
   const idx = Math.floor(u);
   setMagnitude(item.id, dim, strata[idx].id, u - idx);

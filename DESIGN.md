@@ -57,7 +57,26 @@ Dimensions (extensible):
 
 ## Household mode
 - The **House** scope has its own view: groceries and supplies with quick-add, sorted by restock urgency.
-- "Bought" checks an item off; a re-add button resurrects a past item into the inbox (recurring purchases without recurrence machinery).
+- "Bought" checks an item off; a re-add button (or just dumping it again) resurrects the same item.
+- **Store-run mode**: when items have sources, the House view grows filter chips (Netto / Føtex / Wolt / Amazon / …) — standing in a shop, filter to what you usually get there.
+
+## Loops — recurrence, set or discovered
+
+Some items aren't tasks that end; they're **rhythms** (milk, dishwasher tabs, cutting the kids' nails). Loops make that first-class:
+
+- **Identity, not duplicates**: dumping something whose normalized name matches an existing item in the same scope *reactivates that item* instead of creating a copy. "Milk" is one living object that cycles forever, accumulating history.
+- **Discovery**: every recurrence is timestamped. From 3+ occurrences the app learns the rhythm — median gap in days — and marks the item "🔁 ~5d (learned)". No setup required; buying milk is the setup.
+- **Manual**: any item's detail sheet can set/override/remove "loop every N days".
+- **Loop gravity**: a completed loop item rests, then automatically reawakens at ~60% of its cycle and inflates toward the predicted run-out date (`last done + cycle`), exactly like deadline gravity — the milk bubble grows as you're probably running low. At full cycle it surfaces ("🔁 every ~5d — probably needed").
+- Previously sized loop items keep their magnitudes on reactivation; unsized ones return to the inbox for a sizing pass.
+
+## Sources — where things come from
+
+Items can carry a **source** (Netto, Føtex, Rema 1000, Bilka, Lidl, Amazon, Wolt, Nemlig, Apotek, IKEA, …): detected from dump text ("order dog food on wolt"), learned from corrections like every other field, editable in the detail sheet, and understood by the Gemini agent. Sources power store-run filtering, and over time the correction history teaches the agent this family's shopping map.
+
+## Categories & tags
+
+Categories are **free-form strings**, not a fixed taxonomy: the agent invents short lowercase ones as needed, the detail sheet's category field is free text with autocomplete of everything in use, and corrections teach both the local learner and Gemini. Creating a new category = typing it once. (One category per item for now; if cross-cutting tags earn their keep later, `tags: []` is a straightforward extension of the same learning machinery.)
 
 ## The agent
 
@@ -82,6 +101,8 @@ item = {
   scope,                           // family member id | 'house'
   category, visibility,            // 'shared' | 'private'
   due,                             // ISO date or null
+  source,                          // 'Netto' | 'Wolt' | … | null
+  loop,                            // null | { every: days, auto: bool, history: [ts, …] }
   dims: { priority: { s: stratumId, f: 0.62, at }, ... },
   status,                          // inbox | active | done
   agentGuess: { ... }              // what the agent originally said (for learning)

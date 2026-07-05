@@ -2,7 +2,7 @@
 
 import {
   state, save, addItem, getItem, updateItem, deleteItem, markDone,
-  uOf, effectivePriority, gravityBoost, memberName, visibleTo,
+  uOf, effectivePriority, gravityBoost, effDueISO, memberName, visibleTo,
   inboxItems, exportJSON, importJSON, resetAll, DIM_ORDER,
 } from './store.js';
 import { parseDump, classifyOne } from './classify.js';
@@ -26,7 +26,12 @@ export function surfacedOf(items) {
       const boost = gravityBoost(i);
       const dread = uOf(i, 'dread');
       const ageDays = Math.floor((Date.now() - i.createdAt) / 86400e3);
-      if (boost > 0) return { i, why: (boost >= 1.5 ? '🔥 due ' : '⏰ due ') + i.due, w: 10 + boost };
+      if (boost > 0) {
+        const why = i.due
+          ? (boost >= 1.5 ? '🔥 due ' : '⏰ due ') + i.due
+          : '🔁 every ~' + i.loop.every + 'd — probably needed';
+        return { i, why, w: 10 + boost };
+      }
       if (dread !== null && dread >= 4 && ageDays >= 7)
         return { i, why: '🌀 high dread · sitting ' + ageDays + ' days', w: dread + ageDays / 30 };
       return null;
@@ -108,6 +113,8 @@ function itemCard(it) {
       chip('👤 ' + esc(memberName(it.scope))) +
       chip('🏷 ' + esc(it.category)) +
       (it.due ? chip('📅 ' + it.due) : '') +
+      (it.source ? chip('🏪 ' + esc(it.source)) : '') +
+      (it.loop?.every ? chip('🔁 ~' + it.loop.every + 'd loop') : '') +
       chip(it.visibility === 'private' ? '🔒 private' : '👥 shared') +
     '</div>';
   el.onclick = () => openSheet(it.id);
@@ -202,7 +209,7 @@ export function renderLists() {
 
 function sorter(sort) {
   if (sort === 'new') return (a, b) => b.createdAt - a.createdAt;
-  if (sort === 'due') return (a, b) => (a.due || '9999') < (b.due || '9999') ? -1 : 1;
+  if (sort === 'due') return (a, b) => (effDueISO(a) || '9999') < (effDueISO(b) || '9999') ? -1 : 1;
   if (sort === 'priority') return (a, b) => effectivePriority(b) - effectivePriority(a);
   return (a, b) => (uOf(b, sort) ?? -1) - (uOf(a, sort) ?? -1);
 }
@@ -221,6 +228,8 @@ function itemRow(i, sort, opts = {}) {
     '<span class="row-chips">' +
       (i.scope !== state.profile ? chip(esc(memberName(i.scope))) : '') +
       (i.due && !opts.noDue ? chip((boost >= 1.5 ? '🔥 ' : boost > 0 ? '⏰ ' : '📅 ') + i.due) : '') +
+      (i.source ? chip('🏪 ' + esc(i.source)) : '') +
+      (i.loop?.every && !opts.noDue ? chip('🔁 ~' + i.loop.every + 'd') : '') +
       (i.visibility === 'private' ? chip('🔒') : '') +
       (i.status === 'inbox' ? chip('unsized') : '') +
     '</span></span>' +
@@ -255,12 +264,32 @@ export function initHouse() {
   $('#houseAdd').addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); });
 }
 
+let houseSourceVal = 'all';
+
 export function renderHouse() {
   const body = $('#houseBody');
   body.innerHTML = '';
   const items = state.items.filter(i => i.scope === 'house' && visibleTo(i, state.profile));
-  const active = items.filter(i => i.status !== 'done');
+  let active = items.filter(i => i.status !== 'done');
   const done = items.filter(i => i.status === 'done').sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
+
+  // store-run mode: standing in Netto, filter to the Netto loop
+  const sources = [...new Set(active.map(i => i.source).filter(Boolean))].sort();
+  if (sources.length) {
+    const bar = document.createElement('div');
+    bar.className = 'filterbar';
+    for (const s of ['all', ...sources]) {
+      const b = document.createElement('button');
+      b.className = 'chip' + (houseSourceVal === s ? ' on' : '');
+      b.textContent = s === 'all' ? 'Everywhere' : '🏪 ' + s;
+      b.onclick = () => { houseSourceVal = s; renderHouse(); };
+      bar.appendChild(b);
+    }
+    body.appendChild(bar);
+  } else {
+    houseSourceVal = 'all';
+  }
+  if (houseSourceVal !== 'all') active = active.filter(i => i.source === houseSourceVal);
 
   const groups = { groceries: [], supplies: [], other: [] };
   for (const i of active) (groups[i.category] || groups.other).push(i);
@@ -332,6 +361,12 @@ export function openSheet(id) {
       '<label>Category <input id="shCat" list="catList" value="' + esc(i.category) + '">' +
         '<datalist id="catList">' + cats.map(c => '<option value="' + esc(c) + '">').join('') + '</datalist></label>' +
       '<label>Due <input type="date" id="shDue" value="' + (i.due || '') + '"></label>' +
+      '<label>Source <input id="shSource" list="srcList" placeholder="Netto, Wolt…" value="' + esc(i.source || '') + '">' +
+        '<datalist id="srcList">' + [...new Set(state.items.map(x => x.source).filter(Boolean))]
+          .map(s => '<option value="' + esc(s) + '">').join('') + '</datalist></label>' +
+      '<label>Loop: every <input type="number" id="shLoop" min="1" step="1" placeholder="—" value="' +
+        (i.loop?.every ?? '') + '"> days' +
+        (i.loop?.auto && i.loop?.every ? ' <span class="hint">(learned)</span>' : '') + '</label>' +
     '</div>' +
     '<button id="shVis" class="chip big-chip">' + (i.visibility === 'private' ? '🔒 Private (only me)' : '👥 Shared with Ebbe & me') + '</button>' +
     '<div class="dimrows">' + dimRows + '</div>' +
@@ -347,13 +382,19 @@ export function openSheet(id) {
   };
 
   const commit = () => {
+    const lv = parseFloat($('#shLoop').value);
+    const loop = lv > 0
+      ? (lv === i.loop?.every ? i.loop : { every: Math.round(lv), auto: false, history: i.loop?.history || [] })
+      : null;
     updateItem(id, {
       title: $('#shTitle').value.trim() || i.title,
       type: $('#shType').value,
       scope: $('#shScope').value,
       category: $('#shCat').value.trim() || i.category,
       due: $('#shDue').value || null,
+      source: $('#shSource').value.trim() || null,
       visibility,
+      loop,
     });
     changed();
   };

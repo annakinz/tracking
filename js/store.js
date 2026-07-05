@@ -52,6 +52,34 @@ export function uid() { return 'i' + (state.seq++) + '_' + Date.now().toString(3
 // ---------- items ----------
 
 export function addItem(fields) {
+  const scope = fields.scope || state.profile;
+
+  // Loops: re-dumping something that already exists reactivates the same
+  // item instead of duplicating it. Each recurrence is recorded; from 3+
+  // occurrences the rhythm is learned (median gap in days).
+  const phrase = normPhrase(fields.title);
+  const existing = phrase && state.items.find(i =>
+    i.scope === scope && normPhrase(i.title) === phrase);
+  if (existing) {
+    const now = Date.now();
+    const L = existing.loop || (existing.loop = { every: null, auto: true, history: [existing.createdAt] });
+    if (!L.history || !L.history.length) L.history = [existing.createdAt];
+    if (now - L.history[L.history.length - 1] > 12 * 3600e3) L.history.push(now);
+    if (L.auto && L.history.length >= 3) {
+      const gaps = [];
+      for (let k = 1; k < L.history.length; k++) gaps.push((L.history[k] - L.history[k - 1]) / 86400e3);
+      gaps.sort((a, b) => a - b);
+      L.every = Math.max(1, Math.round(gaps[Math.floor(gaps.length / 2)]));
+    }
+    if (fields.due) existing.due = fields.due;
+    if (fields.source && !existing.source) existing.source = fields.source;
+    // previously sized -> straight to active with its magnitudes; else re-size
+    existing.status = Object.keys(existing.dims || {}).length ? 'active' : 'inbox';
+    existing.doneAt = null;
+    save();
+    return existing;
+  }
+
   const item = {
     id: uid(),
     createdAt: Date.now(),
@@ -59,20 +87,39 @@ export function addItem(fields) {
     raw: fields.raw || fields.title,
     title: fields.title,
     type: fields.type || 'task',
-    scope: fields.scope || state.profile,
+    scope,
     category: fields.category || 'general',
     visibility: fields.visibility || 'shared',
     due: fields.due || null,
+    source: fields.source || null,
+    loop: null,
     dims: {},
     status: 'inbox',
     agentGuess: {
       type: fields.type, scope: fields.scope,
       category: fields.category, visibility: fields.visibility,
+      source: fields.source,
     },
   };
   state.items.push(item);
   save();
   return item;
+}
+
+// Reawaken resting loop items at ~60% of their cycle, so loop gravity has
+// room to ramp toward the predicted run-out date instead of starting on fire.
+export function tickLoops() {
+  const now = Date.now();
+  let dirty = false;
+  for (const i of state.items) {
+    if (i.status === 'done' && i.loop?.every && i.doneAt &&
+        now >= i.doneAt + i.loop.every * 0.6 * 86400e3) {
+      i.status = 'active';
+      dirty = true;
+    }
+  }
+  if (dirty) save();
+  return dirty;
 }
 
 export function getItem(id) { return state.items.find(i => i.id === id); }
@@ -89,7 +136,7 @@ export function updateItem(id, fields) {
   if (!item) return;
   const toks = tokens(item.title);
   for (const [k, v] of Object.entries(fields)) {
-    if (['type', 'scope', 'category', 'visibility'].includes(k) && item[k] !== v) {
+    if (['type', 'scope', 'category', 'visibility', 'source'].includes(k) && v && item[k] !== v) {
       learn(k, toks, v);
       learnExact(k, item.title, v);
       // rolling correction log — becomes context for the Gemini agent
@@ -135,11 +182,30 @@ export function insertStratum(dimId, atIdx, label) {
   save();
 }
 
-// ---------- deadline gravity ----------
-// 0 beyond 14 days out; ramps to +3 strata at due/overdue.
+// ---------- deadline & loop gravity ----------
+
+// The effective "needed by" moment: an explicit due date, or for loop items
+// the predicted next need (last completion + learned cycle).
+export function effDueMs(item) {
+  if (item.due) return new Date(item.due + 'T23:59:59').getTime();
+  if (item.loop?.every && item.doneAt) return item.doneAt + item.loop.every * 86400e3;
+  return null;
+}
+
+export function effDueISO(item) {
+  const ms = effDueMs(item);
+  return ms ? new Date(ms).toISOString().slice(0, 10) : null;
+}
+
+// 0 beyond the window; ramps to +3 strata at due/overdue.
 export function gravityBoost(item) {
-  if (!item.due) return 0;
-  const days = (new Date(item.due + 'T23:59:59') - Date.now()) / 86400e3;
+  const ms = effDueMs(item);
+  if (ms === null) return 0;
+  const days = (ms - Date.now()) / 86400e3;
+  if (!item.due && item.loop?.every) {
+    // loop rhythm: ramp across the item's own cycle length
+    return 3 * Math.max(0, Math.min(1, 1 - days / item.loop.every));
+  }
   if (days <= 0) return 3;
   if (days <= 2) return 2.5;
   if (days <= 7) return 1 + (7 - days) / 5 * 1.5;   // 1 .. 2.5
@@ -172,7 +238,7 @@ export function learn(field, toks, value) {
 
 // Exact-phrase memory: one correction is enough for a verbatim repeat
 // ("milk" marked private stays private next time it's dumped).
-const normPhrase = (t) => tokens(t).join(' ');
+export const normPhrase = (t) => tokens(t).join(' ');
 
 export function learnExact(field, title, value) {
   const key = '_exact_' + field;

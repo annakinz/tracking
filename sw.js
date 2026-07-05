@@ -1,4 +1,4 @@
-const CACHE = 'stratos-v2';
+const CACHE = 'stratos-v3';
 const ASSETS = [
   './', 'index.html', 'style.css', 'manifest.webmanifest', 'icon.svg',
   'js/app.js', 'js/store.js', 'js/classify.js', 'js/bubbles.js', 'js/views.js', 'js/agent.js',
