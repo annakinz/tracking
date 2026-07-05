@@ -87,6 +87,15 @@ Capture stays bare (a dump line is just words), but an item can grow rich once i
 
 Deep night-sky ground, serif display type (New York/Georgia) for headings and the brand, quiet translucent panels with hairline borders, a restrained periwinkle→lilac accent. **Ember orange belongs to surfacing alone.** The sizing stage keeps its own sky-to-space depth theme.
 
+## Wellbeing — struggles are not tasks
+
+Things like "insomnia" are type **issue**: real, sized by difficulty, but they don't belong between "buy milk" and "fix the gate", and they never float on the ember takeover (that screen is a call to action; a struggle isn't actionable the same way). Issues live behind a quiet lavender **🌀 wellbeing chip** on the Lists screen — tap to unfold them, sorted by how heavy they feel. Issues also default to **private** (a struggle is yours until you share it), overriding the household's shared-by-default.
+
+## Calendar
+
+- **Now**: any dated item's sheet has "📆 Add to Google Calendar" — a one-tap prefilled event (title, all-day on the due date, notes attached). Zero auth, works today.
+- **Later (with the sync milestone)**: true automatic sync — every dated item appearing in a "Stratos" Google calendar, updates propagating — needs Google OAuth (a one-time ~10-minute Google Cloud console setup to create a client ID, then in-app "connect calendar"). Client-side only, no backend required; roughly a day of careful work plus Google's unverified-app warning for personal apps. The one-tap link covers most of the value until then.
+
 ## Categories & tags
 
 Categories are **free-form strings**, not a fixed taxonomy: the agent invents short lowercase ones as needed, the detail sheet's category field is free text with autocomplete of everything in use, and corrections teach both the local learner and Gemini. Creating a new category = typing it once. (One category per item for now; if cross-cutting tags earn their keep later, `tags: []` is a straightforward extension of the same learning machinery.)

@@ -59,8 +59,9 @@ Categories already in use (reuse when it fits, invent short lowercase ones when 
 Rules:
 - Split comma-separated grocery runs into one item per product.
 - "due": ISO date (YYYY-MM-DD) only if the text implies a deadline, else "".
-- "visibility": "private" only if it's clearly personal/sensitive or a gift/surprise
-  for another family member; otherwise "shared".
+- "visibility": "private" if it's clearly personal/sensitive, a gift/surprise for
+  another family member, or an emotional/health struggle (type "issue" defaults to
+  private); otherwise "shared".
 - "source": where it's bought/ordered when stated or strongly implied (e.g. Netto,
   Føtex, Rema 1000, Bilka, Lidl, Amazon, Wolt, Nemlig, Apotek, IKEA), else "".
 - "raw": the exact fragment of the dump this item came from.

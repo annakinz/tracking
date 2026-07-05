@@ -14,6 +14,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 let personFilterVal = 'all';
+let wellbeingOpen = false;
 
 // Surfacing: the app visibly changes its patterns when something needs your
 // eyes — never a notification, never a buried section. Two triggers:
@@ -21,7 +22,9 @@ let personFilterVal = 'all';
 // (dread is the signal for *why* something isn't getting done).
 export function surfacedOf(items) {
   return items
-    .filter(i => i.status === 'active')
+    // struggles (issues) never surface on the ember screen — the takeover
+    // is a call to action, and a struggle isn't actionable the same way
+    .filter(i => i.status === 'active' && i.type !== 'issue')
     .map(i => {
       const boost = gravityBoost(i);
       const dread = uOf(i, 'dread');
@@ -203,8 +206,12 @@ export function renderLists() {
   const allActive = items.filter(i => i.status !== 'done');
   // subtasks live inside their parent's sheet, not as top-level rows —
   // but they can still surface on their own (due dates, dread)
-  const active = allActive.filter(i => !i.parent);
-  const done = items.filter(i => i.status === 'done' && !i.parent);
+  const topActive = allActive.filter(i => !i.parent);
+  // struggles aren't tasks: they live behind the wellbeing chip, not
+  // between "buy milk" and "fix the gate"
+  const issues = topActive.filter(i => i.type === 'issue');
+  const active = topActive.filter(i => i.type !== 'issue');
+  const done = items.filter(i => i.status === 'done' && !i.parent && i.type !== 'issue');
 
   active.sort(sorter(sort));
 
@@ -223,6 +230,22 @@ export function renderLists() {
     btn.textContent = '🫧 Size ' + inbox.length + ' new item' + (inbox.length > 1 ? 's' : '');
     btn.onclick = () => { window.stratosGoto('size'); };
     body.appendChild(btn);
+  }
+
+  if (issues.length) {
+    const wb = document.createElement('button');
+    wb.className = 'wb-chip' + (wellbeingOpen ? ' open' : '');
+    wb.textContent = '🌀 wellbeing · ' + issues.length;
+    wb.onclick = () => { wellbeingOpen = !wellbeingOpen; renderLists(); };
+    body.appendChild(wb);
+    if (wellbeingOpen) {
+      const panel = document.createElement('div');
+      panel.className = 'wb-panel';
+      panel.innerHTML = '<p class="hint">Not tasks — things being carried. Sized by how heavy they feel right now.</p>';
+      issues.sort((a, b) => (uOf(b, 'difficulty') ?? -1) - (uOf(a, 'difficulty') ?? -1));
+      for (const i of issues) panel.appendChild(itemRow(i, 'difficulty'));
+      body.appendChild(panel);
+    }
   }
 
   const surfaced = surfacedOf(allActive).slice(0, 5);
@@ -427,6 +450,7 @@ export function openSheet(id) {
         (i.loop?.auto && i.loop?.every ? ' <span class="hint">(learned)</span>' : '') + '</label>' +
     '</div>' +
     '<button id="shVis" class="chip big-chip">' + (i.visibility === 'private' ? '🔒 Private (only me)' : '👥 Shared with Ebbe & me') + '</button>' +
+    (i.due ? '<a class="chip big-chip cal" target="_blank" rel="noopener" href="' + gcalUrl(i) + '">📆 Add to Google Calendar</a>' : '') +
     '<div class="group-head">notes</div>' +
     '<textarea id="shNotes" placeholder="Notes, links, anything — paste a URL and it becomes a chip below">' + esc(i.notes || '') + '</textarea>' +
     '<div id="shLinks" class="linkrow">' + linkChips(i.notes) + '</div>' +
@@ -525,6 +549,20 @@ export function openSheet(id) {
 }
 
 // ---------- sheet helpers ----------
+
+// One-tap prefilled Google Calendar event (all-day on the due date).
+function gcalUrl(i) {
+  const start = i.due.replace(/-/g, '');
+  const end = new Date(new Date(i.due + 'T12:00:00').getTime() + 86400e3)
+    .toISOString().slice(0, 10).replace(/-/g, '');
+  const p = new URLSearchParams({
+    action: 'TEMPLATE',
+    text: i.title,
+    dates: start + '/' + end,
+    details: ((i.notes || '') + '\n— from Stratos').trim(),
+  });
+  return 'https://calendar.google.com/calendar/render?' + p.toString();
+}
 
 function linkChips(notes) {
   const urls = (notes || '').match(/https?:\/\/[^\s)>\]]+/g) || [];

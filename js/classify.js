@@ -162,7 +162,8 @@ export function classifyOne(raw) {
     if (category === 'home') scope = 'house';
   }
 
-  let visibility = 'shared'; // household default; learning can flip it
+  // household default is shared — but a struggle is yours until you share it
+  let visibility = type === 'issue' ? 'private' : 'shared';
   let source = detectSource(t);
   if (source && !isGrocery(t) && !matchSupply(t) && type === 'task') {
     // "order dog food on wolt" style lines are usually purchases
