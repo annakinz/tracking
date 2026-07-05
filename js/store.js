@@ -57,9 +57,10 @@ export function addItem(fields) {
   // Loops: re-dumping something that already exists reactivates the same
   // item instead of duplicating it. Each recurrence is recorded; from 3+
   // occurrences the rhythm is learned (median gap in days).
+  // (Subtasks are exempt — steps of different tasks may share names.)
   const phrase = normPhrase(fields.title);
-  const existing = phrase && state.items.find(i =>
-    i.scope === scope && normPhrase(i.title) === phrase);
+  const existing = !fields.parent && phrase && state.items.find(i =>
+    !i.parent && i.scope === scope && normPhrase(i.title) === phrase);
   if (existing) {
     const now = Date.now();
     const L = existing.loop || (existing.loop = { every: null, auto: true, history: [existing.createdAt] });
@@ -93,6 +94,9 @@ export function addItem(fields) {
     due: fields.due || null,
     source: fields.source || null,
     loop: null,
+    parent: fields.parent || null,
+    notes: fields.notes || '',
+    media: [],
     dims: {},
     status: 'inbox',
     agentGuess: {
@@ -125,8 +129,12 @@ export function tickLoops() {
 export function getItem(id) { return state.items.find(i => i.id === id); }
 
 export function deleteItem(id) {
-  state.items = state.items.filter(i => i.id !== id);
+  state.items = state.items.filter(i => i.id !== id && i.parent !== id);
   save();
+}
+
+export function childrenOf(id) {
+  return state.items.filter(i => i.parent === id);
 }
 
 // Update fields; anything that differs from the current value counts as a

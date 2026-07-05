@@ -2,7 +2,7 @@
 
 import { state, save, inboxItems, memberName, tickLoops } from './store.js';
 import { initSizer, openSizer } from './bubbles.js';
-import { initDump, initHouse, renderLists, renderHouse, renderSettings, renderDumpSurface, allSurfaced } from './views.js';
+import { initDump, initHouse, renderLists, renderHouse, renderSettings, renderTakeover, allSurfaced } from './views.js';
 
 const $ = (s) => document.querySelector(s);
 let current = 'dump';
@@ -14,7 +14,6 @@ function goto(view) {
   $('#view-' + view).classList.add('active');
   document.querySelectorAll('.tab').forEach(t =>
     t.classList.toggle('active', t.dataset.view === view));
-  if (view === 'dump') renderDumpSurface();
   if (view === 'lists') renderLists();
   if (view === 'house') renderHouse();
   if (view === 'settings') renderSettings();
@@ -49,7 +48,6 @@ function init() {
 
   document.addEventListener('stratos:changed', () => {
     refreshBadge();
-    if (current === 'dump') renderDumpSurface();
     if (current === 'lists') renderLists();
     if (current === 'house') renderHouse();
   });
@@ -69,6 +67,7 @@ function init() {
   refreshProfileChip();
   refreshBadge();
   goto('dump');
+  renderTakeover(); // if anything is surfacing, it floats before everything else
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch(() => {});

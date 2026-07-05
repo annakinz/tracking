@@ -1,9 +1,9 @@
 // List / dump / house / settings / detail-sheet rendering.
 
 import {
-  state, save, addItem, getItem, updateItem, deleteItem, markDone,
+  state, save, uid, addItem, getItem, updateItem, deleteItem, markDone,
   uOf, effectivePriority, gravityBoost, effDueISO, memberName, visibleTo,
-  inboxItems, exportJSON, importJSON, resetAll, DIM_ORDER,
+  inboxItems, childrenOf, exportJSON, importJSON, resetAll, DIM_ORDER,
 } from './store.js';
 import { parseDump, classifyOne } from './classify.js';
 import { agentClassify, getKey, setKey } from './agent.js';
@@ -44,26 +44,37 @@ export function allSurfaced() {
   return surfacedOf(state.items.filter(i => visibleTo(i, state.profile)));
 }
 
-// Compact surface strip for the Dump tab — the landing screen greets you
-// with what the app wants seen before you even navigate anywhere.
-export function renderDumpSurface() {
-  const box = $('#dumpSurface');
-  if (!box) return;
-  box.innerHTML = '';
-  const surf = allSurfaced().slice(0, 4);
-  if (!surf.length) return;
-  const strip = document.createElement('div');
-  strip.className = 'surface-strip';
-  strip.innerHTML = '<div class="ss-head">👁 surfacing now</div>';
-  for (const s of surf) {
+// The surfacing takeover: on open, if anything needs eyes, an entire
+// screen of floating bubbles on a hot ember background loads BEFORE the
+// rest of the app. Tap a bubble to act on it; tapping through to the app
+// is the explicit, secondary path. Returns true if it took over.
+export function renderTakeover() {
+  const el = $('#takeover');
+  const surf = allSurfaced().slice(0, 7);
+  if (!surf.length || !state.profile) { el.hidden = true; return false; }
+  const wrap = $('#takeoverBubbles');
+  wrap.innerHTML = '';
+  const maxW = Math.max(...surf.map(s => s.w));
+  const slots = [[50, 32], [26, 58], [74, 60], [30, 14], [73, 17], [26, 84], [72, 86]];
+  surf.forEach((s, idx) => {
     const b = document.createElement('button');
-    b.className = 'ss-item';
-    b.innerHTML = '<span class="ss-title">' + esc(s.i.title) + '</span>' +
-      '<span class="minichip why">' + s.why + '</span>';
-    b.onclick = () => openSheet(s.i.id);
-    strip.appendChild(b);
-  }
-  box.appendChild(strip);
+    b.className = 'tk-bubble';
+    const size = 30 + 32 * (s.w / maxW);
+    b.style.width = b.style.height = 'min(' + size + 'vw, ' + Math.round(size * 0.72) + 'vh)';
+    b.style.left = slots[idx][0] + '%';
+    b.style.top = slots[idx][1] + '%';
+    b.style.zIndex = 10 + Math.round(60 - size);
+    b.style.animationDuration = (7 + (idx % 3) * 2.1) + 's';
+    b.style.animationDelay = (-idx * 1.4) + 's';
+    b.innerHTML = '<span class="tk-title"></span><span class="tk-why"></span>';
+    b.querySelector('.tk-title').textContent = s.i.title;
+    b.querySelector('.tk-why').textContent = s.why;
+    b.onclick = () => { el.hidden = true; openSheet(s.i.id); };
+    wrap.appendChild(b);
+  });
+  $('#takeoverDismiss').onclick = () => { el.hidden = true; };
+  el.hidden = false;
+  return true;
 }
 
 export function changed() {
@@ -124,6 +135,12 @@ function itemCard(it) {
 const chip = (t) => '<span class="minichip">' + t + '</span>';
 const typeIcon = (t) => ({ task: '☑️', issue: '🌀', supply: '🧺', goal: '🎯' }[t] || '•');
 
+function kidsChip(i) {
+  const kids = childrenOf(i.id);
+  if (!kids.length) return '';
+  return chip('◔ ' + kids.filter(k => k.status === 'done').length + '/' + kids.length);
+}
+
 // ---------- LISTS ----------
 
 export function renderLists() {
@@ -147,8 +164,11 @@ export function renderLists() {
   if (vis === 'shared') items = items.filter(i => i.visibility === 'shared');
   if (vis === 'private') items = items.filter(i => i.visibility === 'private' && i.createdBy === state.profile);
 
-  const active = items.filter(i => i.status !== 'done');
-  const done = items.filter(i => i.status === 'done');
+  const allActive = items.filter(i => i.status !== 'done');
+  // subtasks live inside their parent's sheet, not as top-level rows —
+  // but they can still surface on their own (due dates, dread)
+  const active = allActive.filter(i => !i.parent);
+  const done = items.filter(i => i.status === 'done' && !i.parent);
 
   active.sort(sorter(sort));
 
@@ -160,7 +180,7 @@ export function renderLists() {
     return;
   }
 
-  const inbox = active.filter(i => i.status === 'inbox');
+  const inbox = allActive.filter(i => i.status === 'inbox');
   if (inbox.length) {
     const btn = document.createElement('button');
     btn.className = 'primary wide';
@@ -169,7 +189,7 @@ export function renderLists() {
     body.appendChild(btn);
   }
 
-  const surfaced = surfacedOf(active).slice(0, 5);
+  const surfaced = surfacedOf(allActive).slice(0, 5);
 
   if (surfaced.length) {
     const h = document.createElement('div');
@@ -230,6 +250,8 @@ function itemRow(i, sort, opts = {}) {
       (i.due && !opts.noDue ? chip((boost >= 1.5 ? '🔥 ' : boost > 0 ? '⏰ ' : '📅 ') + i.due) : '') +
       (i.source ? chip('🏪 ' + esc(i.source)) : '') +
       (i.loop?.every && !opts.noDue ? chip('🔁 ~' + i.loop.every + 'd') : '') +
+      (kidsChip(i)) +
+      (i.notes || (i.media || []).length ? chip('📎') : '') +
       (i.visibility === 'private' ? chip('🔒') : '') +
       (i.status === 'inbox' ? chip('unsized') : '') +
     '</span></span>' +
@@ -369,11 +391,60 @@ export function openSheet(id) {
         (i.loop?.auto && i.loop?.every ? ' <span class="hint">(learned)</span>' : '') + '</label>' +
     '</div>' +
     '<button id="shVis" class="chip big-chip">' + (i.visibility === 'private' ? '🔒 Private (only me)' : '👥 Shared with Ebbe & me') + '</button>' +
+    '<div class="group-head">notes</div>' +
+    '<textarea id="shNotes" placeholder="Notes, links, anything — paste a URL and it becomes a chip below">' + esc(i.notes || '') + '</textarea>' +
+    '<div id="shLinks" class="linkrow">' + linkChips(i.notes) + '</div>' +
+    '<div class="group-head">photos</div>' +
+    '<div class="mediagrid" id="shMedia"></div>' +
+    '<label class="chip addphoto">📷 Add photo<input type="file" id="shPhoto" accept="image/*" hidden></label>' +
+    '<div class="group-head">steps</div>' +
+    '<div id="shKids"></div>' +
+    '<div class="quickadd subadd"><input id="shSubInput" placeholder="Break it into steps…">' +
+    '<button id="shSubAdd" class="chip">Add</button></div>' +
     '<div class="dimrows">' + dimRows + '</div>' +
     '<div class="sheet-actions">' +
       '<button id="shDone" class="primary">' + (i.status === 'done' ? '↩︎ Not done' : '✓ Done') + '</button>' +
       '<button id="shDelete" class="danger">Delete</button>' +
     '</div>';
+
+  // live link chips as you type/paste
+  $('#shNotes').addEventListener('input', () => {
+    $('#shLinks').innerHTML = linkChips($('#shNotes').value);
+  });
+
+  renderSheetMedia(i);
+  renderSheetKids(i);
+
+  $('#shPhoto').onchange = async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    try {
+      const dataUrl = await shrinkImage(f);
+      const item = getItem(id);
+      (item.media || (item.media = [])).push({ id: uid(), dataUrl });
+      save();
+      renderSheetMedia(item);
+      changed();
+    } catch { alert("Couldn't read that image."); }
+    e.target.value = '';
+  };
+
+  const addStep = () => {
+    const t = $('#shSubInput').value.trim();
+    if (!t) return;
+    addItem({ title: t, type: 'task', scope: i.scope, category: i.category, visibility: i.visibility, parent: i.id });
+    $('#shSubInput').value = '';
+    // a task broken into real steps has become a goal (correct me in Type)
+    if (getItem(id).type === 'task' && childrenOf(id).length >= 2) {
+      getItem(id).type = 'goal';
+      $('#shType').value = 'goal';
+      save();
+    }
+    renderSheetKids(getItem(id));
+    changed();
+  };
+  $('#shSubAdd').onclick = addStep;
+  $('#shSubInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') addStep(); });
 
   let visibility = i.visibility;
   $('#shVis').onclick = () => {
@@ -393,6 +464,7 @@ export function openSheet(id) {
       category: $('#shCat').value.trim() || i.category,
       due: $('#shDue').value || null,
       source: $('#shSource').value.trim() || null,
+      notes: $('#shNotes').value,
       visibility,
       loop,
     });
@@ -414,6 +486,71 @@ export function openSheet(id) {
   $('#shDelete').onclick = () => {
     if (confirm('Delete "' + i.title + '"?')) { deleteItem(id); wrap.hidden = true; changed(); }
   };
+}
+
+// ---------- sheet helpers ----------
+
+function linkChips(notes) {
+  const urls = (notes || '').match(/https?:\/\/[^\s)>\]]+/g) || [];
+  return [...new Set(urls)].map(u => {
+    let host = u;
+    try { host = new URL(u).hostname.replace(/^www\./, ''); } catch { /* keep raw */ }
+    return '<a class="minichip link" href="' + esc(u) + '" target="_blank" rel="noopener">🔗 ' + esc(host) + '</a>';
+  }).join('');
+}
+
+function shrinkImage(file, max = 1000) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const k = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * k);
+      c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL('image/jpeg', 0.82));
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+function renderSheetMedia(i) {
+  const grid = $('#shMedia');
+  grid.innerHTML = '';
+  for (const m of (i.media || [])) {
+    const img = document.createElement('img');
+    img.src = m.dataUrl;
+    img.onclick = () => {
+      if (confirm('Remove this photo?')) {
+        i.media = i.media.filter(x => x.id !== m.id);
+        save();
+        renderSheetMedia(i);
+      }
+    };
+    grid.appendChild(img);
+  }
+}
+
+function renderSheetKids(i) {
+  const box = $('#shKids');
+  box.innerHTML = '';
+  for (const k of childrenOf(i.id)) {
+    const row = document.createElement('div');
+    row.className = 'kidrow' + (k.status === 'done' ? ' done' : '');
+    const check = document.createElement('button');
+    check.className = 'kid-check';
+    check.textContent = k.status === 'done' ? '✓' : '';
+    check.onclick = () => { markDone(k.id, k.status !== 'done'); renderSheetKids(i); changed(); };
+    const title = document.createElement('button');
+    title.className = 'kid-title';
+    title.textContent = k.title;
+    title.onclick = () => openSheet(k.id); // dive into the step's own sheet
+    row.append(check, title);
+    box.appendChild(row);
+  }
 }
 
 // ---------- SETTINGS ----------

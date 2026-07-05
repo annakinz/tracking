@@ -52,7 +52,7 @@ Dimensions (extensible):
 - Sort by any magnitude dimension, due date, or recency.
 - **Deadline gravity**: items with a due date self-inflate as the date nears. Effective priority = sized priority + gravity boost (0 beyond 14 days, ramping to +3 strata when due/overdue). Gravity is visual (item swells, flame indicator) and affects sorting — an approaching dentist appointment climbs into "on fire" without anyone touching it.
 - Tap an item → detail sheet: correct category/type/scope/visibility, set due date, resize any dimension, mark done, delete. Every correction teaches the agent.
-- **Surfacing, never nagging**: surfacing is a UX stance, not a notification setting. When something needs your eyes, **the app visibly changes its normal patterns** because it cares that you see it: the Dump screen (the landing tab) grows a glowing "👁 surfacing now" strip, the Lists tab itself glows, and surfaced items sit above everything with the reason attached. What surfaces: (a) items whose due date is inside the gravity window, and (b) **stale high-dread items** — sized dread ≥ stratum 5 and sitting untouched a week+. Dread is the signal for *why something isn't getting done*; making it impossible to not-see inside the app is the whole intervention. Nothing ever pushes outside the app, and there are no red badges or guilt mechanics.
+- **Surfacing, never nagging**: surfacing is an interruption of the app's own flow, not a labeled list section. When something needs your eyes, **it floats before anything else**: opening the app lands you on a full-screen **takeover** — the surfaced items as gently drifting bubbles, sized by urgency with the reason attached, on a hot ember-orange field (saturated warm orange is the arousal/energy end of the palette — motivating without red's alarm connotations, and the only place the color appears, so it never dilutes). Tapping a bubble opens that item to act on; getting to the rest of the app is the explicit, secondary path ("everything else ↓"). Inside the app, the Lists tab keeps an ember signal and surfaced items sit above all grouping. What surfaces: (a) items inside the deadline/loop gravity window, and (b) **stale high-dread items** — sized dread ≥ stratum 5 and untouched a week+ (dread is the signal for *why something isn't getting done*). Nothing ever pushes outside the app, and there are no red badges or guilt mechanics.
 - **Done** items are archived, not deleted — the archive is training data.
 
 ## Household mode
@@ -73,6 +73,19 @@ Some items aren't tasks that end; they're **rhythms** (milk, dishwasher tabs, cu
 ## Sources — where things come from
 
 Items can carry a **source** (Netto, Føtex, Rema 1000, Bilka, Lidl, Amazon, Wolt, Nemlig, Apotek, IKEA, …): detected from dump text ("order dog food on wolt"), learned from corrections like every other field, editable in the detail sheet, and understood by the Gemini agent. Sources power store-run filtering, and over time the correction history teaches the agent this family's shopping map.
+
+## Inside an item — notes, links, photos, steps
+
+Capture stays bare (a dump line is just words), but an item can grow rich once it exists:
+
+- **Notes**: free text on every item. URLs pasted anywhere in the notes automatically become tappable link chips (hostname shown). Items with content show a 📎 in lists.
+- **Photos**: attach images (the broken part, the permission slip, the screenshot). Client-side downscaled (~1000px JPEG) and stored inline for now; the sync milestone moves media to real storage.
+- **Steps**: any item can be broken into subtasks — real items with their own notes, dates, sizing, and even their own steps. Steps live inside the parent's sheet (checkable, tappable to dive in), not as top-level list rows; the parent shows progress (◔ 2/5). Steps can still *surface* on their own merits (a step's due date is a real due date).
+- **Task → goal**: breaking a task into 2+ real steps quietly promotes it to a **goal** — a thing you're working toward rather than doing. Like every agent move, it's visible and correctable (the Type field is right there).
+
+## Visual language
+
+Deep night-sky ground, serif display type (New York/Georgia) for headings and the brand, quiet translucent panels with hairline borders, a restrained periwinkle→lilac accent. **Ember orange belongs to surfacing alone.** The sizing stage keeps its own sky-to-space depth theme.
 
 ## Categories & tags
 
@@ -103,6 +116,9 @@ item = {
   due,                             // ISO date or null
   source,                          // 'Netto' | 'Wolt' | … | null
   loop,                            // null | { every: days, auto: bool, history: [ts, …] }
+  parent,                          // parent item id (this item is a step) | null
+  notes,                           // free text; URLs become link chips
+  media: [{ id, dataUrl }, …],     // downscaled inline images (until sync)
   dims: { priority: { s: stratumId, f: 0.62, at }, ... },
   status,                          // inbox | active | done
   agentGuess: { ... }              // what the agent originally said (for learning)
