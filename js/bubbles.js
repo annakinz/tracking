@@ -148,7 +148,6 @@ function render() {
 
   const w = MIN_W + (MAX_W - MIN_W) * frac;
   els.bubble.style.width = els.bubble.style.height = w + 'px';
-  els.bubble.style.fontSize = Math.max(12, w / 9) + 'px';
 
   els.num.textContent = (idx + 1);
   els.name.textContent = strata[idx].label;

@@ -231,15 +231,23 @@ select {
 .peer span { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 #theBubble {
   position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%);
-  border-radius: 50%; display: flex; align-items: center; justify-content: center;
-  text-align: center; padding: 10%; overflow: hidden;
+  border-radius: 50%;
   background: radial-gradient(circle at 32% 28%, #ffffff, rgba(255,255,255,.86) 70%, rgba(255,255,255,.72));
-  border: none;
   box-shadow: 0 10px 0 rgba(0, 0, 0, .12);
-  font-family: var(--display); font-weight: 620; line-height: 1.18; color: var(--ink);
   transition: width .06s linear, height .06s linear;
 }
-#theBubble span { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+/* the title is pinned to the stage, not the bubble: same size, same
+   center, no matter how far the circle is pinched */
+#bubbleLabelBox {
+  position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%);
+  width: min(62vw, 290px); text-align: center; pointer-events: none;
+  font-family: var(--display); font-weight: 620; font-size: 18px;
+  line-height: 1.25; color: var(--ink);
+  text-shadow: 0 1px 0 rgba(255,255,255,.9), 0 0 14px rgba(255,255,255,.75);
+}
+#bubbleLabelBox span {
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+}
 
 #rail {
   position: absolute; right: 9px; top: 50%; transform: translateY(-50%);
