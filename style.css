@@ -164,7 +164,7 @@ h1 { font-family: var(--display); font-weight: 640; font-size: 30px; letter-spac
 .filed-card {
   display: block; width: 100%; text-align: left;
   background: var(--card);
-  border-radius: var(--r); padding: 13px 15px; margin-top: 9px;
+  border-radius: var(--r); padding: 13px 15px; margin-top: 12px;
   animation: pop .25s ease-out;
 }
 @keyframes pop { from { transform: scale(.97); opacity: 0; } }
@@ -182,7 +182,7 @@ select {
 .row {
   display: flex; align-items: center; gap: 13px; width: 100%; text-align: left;
   background: var(--card);
-  border-radius: 22px; padding: 12px 14px; margin-top: 8px;
+  border-radius: 22px; padding: 12px 14px; margin-top: 11px;
 }
 .row.done { opacity: .45; }
 .row.done .row-title { text-decoration: line-through; }

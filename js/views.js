@@ -21,14 +21,14 @@ let wellbeingOpen = false;
 // get fixed homes; new ones hash into the palette deterministically so a
 // category keeps its color forever.
 const SWATCHES = [
-  { bg: '#FFE1DA', dot: '#FF7A59', deep: '#B33A1E' }, // coral
-  { bg: '#D9F4E4', dot: '#2FBF8F', deep: '#17714F' }, // mint
-  { bg: '#E8E0FA', dot: '#8B6FE8', deep: '#5B3FC4' }, // lilac
-  { bg: '#FFF3C4', dot: '#F0B000', deep: '#8F6A00' }, // lemon
-  { bg: '#D8EDFB', dot: '#3E9EE3', deep: '#1C6AA6' }, // sky
-  { bg: '#FBDCEC', dot: '#E9629F', deep: '#A83067' }, // rose
-  { bg: '#E9EFD2', dot: '#97A93B', deep: '#5D6B1C' }, // sage
-  { bg: '#FFE6C7', dot: '#FF9E3D', deep: '#A85E10' }, // peach
+  { bg: '#FFD3C8', dot: '#FF7A59', deep: '#B33A1E' }, // coral
+  { bg: '#BFEED6', dot: '#2FBF8F', deep: '#17714F' }, // mint
+  { bg: '#DDD0F7', dot: '#8B6FE8', deep: '#5B3FC4' }, // lilac
+  { bg: '#FFEBA1', dot: '#F0B000', deep: '#8F6A00' }, // lemon
+  { bg: '#C2E3FA', dot: '#3E9EE3', deep: '#1C6AA6' }, // sky
+  { bg: '#F9CCE3', dot: '#E9629F', deep: '#A83067' }, // rose
+  { bg: '#DFE9B4', dot: '#97A93B', deep: '#5D6B1C' }, // sage
+  { bg: '#FFDCA8', dot: '#FF9E3D', deep: '#A85E10' }, // peach
 ];
 const CAT_HOMES = {
   health: 0, groceries: 1, supplies: 1, school: 2, wellbeing: 5,
@@ -184,7 +184,9 @@ function renderDumpResults(items, viaAgent) {
 function itemCard(it) {
   const el = document.createElement('button');
   el.className = 'filed-card';
-  el.style.background = catSwatch(it.category).bg;
+  const fsw = catSwatch(it.category);
+  el.style.background = fsw.bg;
+  el.style.boxShadow = '0 4px 0 ' + fsw.dot + '66';
   el.innerHTML =
     '<div class="fc-title">' + esc(it.title) + '</div>' +
     '<div class="fc-chips">' +
@@ -331,6 +333,7 @@ function itemRow(i, sort, opts = {}) {
   el.className = 'row' + (i.status === 'done' ? ' done' : '');
   const sw = catSwatch(i.category);
   el.style.background = sw.bg;
+  el.style.boxShadow = '0 4px 0 ' + sw.dot + '66';
   const dimForDot = ['priority', 'effort', 'difficulty', 'dread', 'restock'].includes(sort) ? sort : 'priority';
   const u = dimForDot === 'priority' ? effectivePriority(i) : (uOf(i, dimForDot) ?? null);
   const n = state.dims[dimForDot].strata.length;
