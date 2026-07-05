@@ -9,14 +9,15 @@ import { defaultDimension } from './classify.js';
 const MIN_W = 96, MAX_W = 250;   // bubble width across one stratum
 
 // ground → meadow → sky → sunset → dusk → night → space
+// (each stratum is properly its own color; sunset is the pink→orange pair)
 const STAGE_THEMES = [
-  ['#F7E8CB', '#EDD5A4', '#6B4E12'],
-  ['#E9F4D3', '#CBE6A6', '#4C6A1D'],
-  ['#D8EFFB', '#A5D9F5', '#1C6AA6'],
-  ['#FFE3C4', '#FFB585', '#A34A0F'],
-  ['#E4D9F7', '#B29CE2', '#4B3390'],
-  ['#4A4487', '#2A2660', '#EAE5FF'],
-  ['#1D1B36', '#0C0B1E', '#D9D3F5'],
+  ['#FFE49A', '#F5C35B', '#6B4E12'],
+  ['#D3F5A6', '#93DB66', '#336110'],
+  ['#BFE9FF', '#6BBFF2', '#0F5C94'],
+  ['#FFC3D9', '#FF9660', '#8F1D4E'],
+  ['#E5B8F2', '#8E7BE6', '#3F2387'],
+  ['#5A4BAF', '#2A2168', '#EDE7FF'],
+  ['#282052', '#0D0B22', '#D9D3F5'],
 ];
 const PEER_SLOTS = [
   [0.18, 0.20], [0.82, 0.18], [0.14, 0.62], [0.86, 0.60], [0.30, 0.82], [0.72, 0.84],
