@@ -6,6 +6,7 @@ import {
   inboxItems, exportJSON, importJSON, resetAll, DIM_ORDER,
 } from './store.js';
 import { parseDump, classifyOne } from './classify.js';
+import { agentClassify, getKey, setKey } from './agent.js';
 import { openSizer } from './bubbles.js';
 
 const $ = (s) => document.querySelector(s);
@@ -14,6 +15,52 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
 
 let personFilterVal = 'all';
 
+// Surfacing: the app visibly changes its patterns when something needs your
+// eyes — never a notification, never a buried section. Two triggers:
+// deadline gravity, and high-dread items that have sat for a week+
+// (dread is the signal for *why* something isn't getting done).
+export function surfacedOf(items) {
+  return items
+    .filter(i => i.status === 'active')
+    .map(i => {
+      const boost = gravityBoost(i);
+      const dread = uOf(i, 'dread');
+      const ageDays = Math.floor((Date.now() - i.createdAt) / 86400e3);
+      if (boost > 0) return { i, why: (boost >= 1.5 ? '🔥 due ' : '⏰ due ') + i.due, w: 10 + boost };
+      if (dread !== null && dread >= 4 && ageDays >= 7)
+        return { i, why: '🌀 high dread · sitting ' + ageDays + ' days', w: dread + ageDays / 30 };
+      return null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.w - a.w);
+}
+
+export function allSurfaced() {
+  return surfacedOf(state.items.filter(i => visibleTo(i, state.profile)));
+}
+
+// Compact surface strip for the Dump tab — the landing screen greets you
+// with what the app wants seen before you even navigate anywhere.
+export function renderDumpSurface() {
+  const box = $('#dumpSurface');
+  if (!box) return;
+  box.innerHTML = '';
+  const surf = allSurfaced().slice(0, 4);
+  if (!surf.length) return;
+  const strip = document.createElement('div');
+  strip.className = 'surface-strip';
+  strip.innerHTML = '<div class="ss-head">👁 surfacing now</div>';
+  for (const s of surf) {
+    const b = document.createElement('button');
+    b.className = 'ss-item';
+    b.innerHTML = '<span class="ss-title">' + esc(s.i.title) + '</span>' +
+      '<span class="minichip why">' + s.why + '</span>';
+    b.onclick = () => openSheet(s.i.id);
+    strip.appendChild(b);
+  }
+  box.appendChild(strip);
+}
+
 export function changed() {
   document.dispatchEvent(new CustomEvent('stratos:changed'));
 }
@@ -21,21 +68,33 @@ export function changed() {
 // ---------- DUMP ----------
 
 export function initDump() {
-  $('#dumpBtn').addEventListener('click', () => {
+  const btn = $('#dumpBtn');
+  btn.addEventListener('click', async () => {
     const text = $('#dumpText').value;
-    const parts = parseDump(text);
-    if (!parts.length) return;
-    const made = parts.map(raw => addItem(classifyOne(raw)));
+    if (!text.trim()) return;
+    btn.disabled = true;
+    btn.textContent = getKey() ? 'Filing…' : 'Dump it';
+    let classified = await agentClassify(text);
+    const viaAgent = !!classified;
+    if (!classified) classified = parseDump(text).map(classifyOne);
+    btn.disabled = false;
+    btn.textContent = 'Dump it';
+    if (!classified.length) return;
+    const made = classified.map(addItem);
     $('#dumpText').value = '';
-    renderDumpResults(made);
+    renderDumpResults(made, viaAgent);
     changed();
   });
 }
 
-function renderDumpResults(items) {
+function renderDumpResults(items, viaAgent) {
   const box = $('#dumpResults');
+  const via = viaAgent ? '✨ filed by Gemini'
+    : getKey() ? 'filed by built-in rules (Gemini unreachable)'
+    : 'filed by built-in rules — add a Gemini key in ⚙︎ Settings for smarter filing';
   box.innerHTML = '<div class="hint" style="margin-top:14px">Filed ' + items.length +
-    (items.length === 1 ? ' item' : ' items') + ' — tap to correct me. Then head to <b>Size</b> 🫧</div>';
+    (items.length === 1 ? ' item' : ' items') + ' <span style="opacity:.7">(' + via + ')</span>' +
+    ' — tap to correct me. Then head to <b>Size</b> 🫧</div>';
   for (const it of items) box.appendChild(itemCard(it));
 }
 
@@ -103,6 +162,23 @@ export function renderLists() {
     body.appendChild(btn);
   }
 
+  const surfaced = surfacedOf(active).slice(0, 5);
+
+  if (surfaced.length) {
+    const h = document.createElement('div');
+    h.className = 'group-head surfaced-head';
+    h.textContent = '👁 surfacing now';
+    body.appendChild(h);
+    for (const s of surfaced) {
+      const row = itemRow(s.i, sort, { noDue: true });
+      const why = document.createElement('span');
+      why.className = 'minichip why';
+      why.textContent = s.why;
+      row.querySelector('.row-chips').prepend(why);
+      body.appendChild(row);
+    }
+  }
+
   // group by category
   const groups = {};
   for (const i of active) (groups[i.category] || (groups[i.category] = [])).push(i);
@@ -131,7 +207,7 @@ function sorter(sort) {
   return (a, b) => (uOf(b, sort) ?? -1) - (uOf(a, sort) ?? -1);
 }
 
-function itemRow(i, sort) {
+function itemRow(i, sort, opts = {}) {
   const el = document.createElement('button');
   el.className = 'row' + (i.status === 'done' ? ' done' : '');
   const dimForDot = ['priority', 'effort', 'difficulty', 'dread', 'restock'].includes(sort) ? sort : 'priority';
@@ -144,7 +220,7 @@ function itemRow(i, sort) {
     '<span class="row-main"><span class="row-title">' + esc(i.title) + '</span>' +
     '<span class="row-chips">' +
       (i.scope !== state.profile ? chip(esc(memberName(i.scope))) : '') +
-      (i.due ? chip((boost >= 1.5 ? '🔥 ' : boost > 0 ? '⏰ ' : '📅 ') + i.due) : '') +
+      (i.due && !opts.noDue ? chip((boost >= 1.5 ? '🔥 ' : boost > 0 ? '⏰ ' : '📅 ') + i.due) : '') +
       (i.visibility === 'private' ? chip('🔒') : '') +
       (i.status === 'inbox' ? chip('unsized') : '') +
     '</span></span>' +
@@ -312,6 +388,9 @@ export function renderSettings() {
     '<div class="setrow">Profile: <b>' + esc(memberName(state.profile)) + '</b> ' +
     '<button id="setSwitch" class="chip">switch</button></div>' +
     '<div class="group-head">family</div>' + famRows +
+    '<div class="group-head">agent</div>' +
+    '<label class="famrow">🔑 <input id="setGemini" type="password" placeholder="Gemini API key (free at aistudio.google.com/apikey)" value="' + esc(getKey()) + '"></label>' +
+    '<p class="hint">With a key, dumps are filed by Gemini (free tier, called straight from this device — the key never leaves it and is not included in exports). Without one, built-in rules do the filing. Your corrections teach both.</p>' +
     '<div class="group-head">data</div>' +
     '<div class="setrow"><button id="setExport" class="chip">Export JSON</button> ' +
     '<label class="chip">Import <input type="file" id="setImport" accept=".json" hidden></label> ' +
@@ -324,6 +403,7 @@ export function renderSettings() {
       if (f && inp.value.trim()) { f.name = inp.value.trim(); save(); changed(); }
     };
   });
+  $('#setGemini').onchange = (e) => { setKey(e.target.value); };
   $('#setSwitch').onclick = () => {
     state.profile = state.profile === 'anna' ? 'ebbe' : 'anna';
     save(); changed(); renderSettings();

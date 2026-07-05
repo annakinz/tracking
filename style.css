@@ -89,6 +89,36 @@ h1 { font-size: 22px; margin: 6px 0 4px; }
   font-size: 11px; font-weight: 700; margin: 18px 0 6px;
 }
 
+.surfaced-head { color: #ffd27a; }
+.why { background: rgba(255, 210, 122, .14); color: #ffd27a; }
+.surface-strip {
+  border: 1px solid rgba(255, 210, 122, .35);
+  background: rgba(255, 210, 122, .06);
+  border-radius: 16px; padding: 12px 14px; margin: 14px 0 2px;
+  animation: surfglow 2.8s ease-in-out infinite;
+}
+@keyframes surfglow {
+  0%, 100% { box-shadow: 0 0 6px rgba(255, 210, 122, .10); }
+  50% { box-shadow: 0 0 22px rgba(255, 210, 122, .28); }
+}
+.ss-head {
+  color: #ffd27a; font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .1em; margin-bottom: 4px;
+}
+.ss-item {
+  display: flex; width: 100%; justify-content: space-between; align-items: center;
+  gap: 8px; padding: 8px 0; text-align: left;
+  border-top: 1px solid rgba(255, 210, 122, .12);
+}
+.ss-item:first-of-type { border-top: none; }
+.ss-title { font-weight: 500; min-width: 0; }
+.tab.surfacing .ticon { text-shadow: 0 0 14px rgba(255, 210, 122, .95); }
+.tab.surfacing::after {
+  content: ''; position: absolute; top: 8px; right: calc(50% - 24px);
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #ffd27a; box-shadow: 0 0 8px #ffd27a;
+}
+
 /* ---------- dump ---------- */
 #dumpText {
   width: 100%; min-height: 160px; margin-top: 12px;

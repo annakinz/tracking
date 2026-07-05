@@ -1,7 +1,7 @@
-const CACHE = 'stratos-v1';
+const CACHE = 'stratos-v2';
 const ASSETS = [
   './', 'index.html', 'style.css', 'manifest.webmanifest', 'icon.svg',
-  'js/app.js', 'js/store.js', 'js/classify.js', 'js/bubbles.js', 'js/views.js',
+  'js/app.js', 'js/store.js', 'js/classify.js', 'js/bubbles.js', 'js/views.js', 'js/agent.js',
 ];
 
 self.addEventListener('install', (e) => {
@@ -16,8 +16,10 @@ self.addEventListener('activate', (e) => {
   );
 });
 
-// network-first for navigations (so updates land), cache-first for assets
+// network-first for navigations (so updates land), cache-first for assets;
+// never touch API calls (non-GET or cross-origin, e.g. Gemini)
 self.addEventListener('fetch', (e) => {
+  if (e.request.method !== 'GET' || !e.request.url.startsWith(self.location.origin)) return;
   if (e.request.mode === 'navigate') {
     e.respondWith(fetch(e.request).catch(() => caches.match('./')));
     return;

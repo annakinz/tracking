@@ -92,6 +92,9 @@ export function updateItem(id, fields) {
     if (['type', 'scope', 'category', 'visibility'].includes(k) && item[k] !== v) {
       learn(k, toks, v);
       learnExact(k, item.title, v);
+      // rolling correction log — becomes context for the Gemini agent
+      (state.corrections || (state.corrections = [])).push({ title: item.title, field: k, to: v, at: Date.now() });
+      state.corrections = state.corrections.slice(-50);
     }
     item[k] = v;
   }

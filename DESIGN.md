@@ -52,6 +52,7 @@ Dimensions (extensible):
 - Sort by any magnitude dimension, due date, or recency.
 - **Deadline gravity**: items with a due date self-inflate as the date nears. Effective priority = sized priority + gravity boost (0 beyond 14 days, ramping to +3 strata when due/overdue). Gravity is visual (item swells, flame indicator) and affects sorting — an approaching dentist appointment climbs into "on fire" without anyone touching it.
 - Tap an item → detail sheet: correct category/type/scope/visibility, set due date, resize any dimension, mark done, delete. Every correction teaches the agent.
+- **Surfacing, never nagging**: surfacing is a UX stance, not a notification setting. When something needs your eyes, **the app visibly changes its normal patterns** because it cares that you see it: the Dump screen (the landing tab) grows a glowing "👁 surfacing now" strip, the Lists tab itself glows, and surfaced items sit above everything with the reason attached. What surfaces: (a) items whose due date is inside the gravity window, and (b) **stale high-dread items** — sized dread ≥ stratum 5 and sitting untouched a week+. Dread is the signal for *why something isn't getting done*; making it impossible to not-see inside the app is the whole intervention. Nothing ever pushes outside the app, and there are no red badges or guilt mechanics.
 - **Done** items are archived, not deleted — the archive is training data.
 
 ## Household mode
@@ -64,17 +65,12 @@ Dimensions (extensible):
 - Heuristic classifier: splits dump text into items (newlines, short comma lists), detects type (verb-led → task; bare noun like "insomnia" → issue; grocery/supply lexicon → supply), scope (family member names, house items), category (health, school, errands, home, finance, planning, groceries, supplies, …), and due dates (natural phrases: "tomorrow", "by Friday", "June 12").
 - **Local learning loop**: every user correction is recorded as token→field-value evidence. The classifier consults learned associations *before* built-in rules, so it genuinely adapts to how this family classifies. Visibility is learned the same way (repeatedly marking a kind of item private teaches the default).
 
-### v2 (Claude-powered, tiny backend)
-One serverless endpoint (Cloudflare Worker / Val Town / similar) holding the Anthropic API key:
+### v2 (Gemini, no backend) — shipped
+Dumps are filed by **Gemini** (`gemini-2.5-flash`, free tier) called **directly from the device** — no server at all. Each device holds its own API key (Settings → agent; free from aistudio.google.com/apikey), stored only in that device's localStorage and excluded from data exports.
 
-```
-POST /classify
-{ profile, rawText,
-  context: { familyMembers, knownCategories, recentCorrections[≤50] } }
-→ { items: [{ title, type, scope, category, visibility, due, dimension, note }] }
-```
+The prompt carries: today's date, who is dumping, the family roster with ids, categories already in use, and the **last ≤50 corrections** — so the model personalizes to how this family classifies without any training infrastructure. Output is schema-constrained JSON (`responseSchema`), sanitized on the client (unknown scopes/types fall back safely), and the user's own **exact-phrase corrections still override the model**.
 
-The client falls back to the local heuristic when offline or if the endpoint fails. Corrections history rides along as context, so the model personalizes without any training infrastructure.
+Fallback chain: no key / offline / any API error → the local heuristic classifier. The app is never blocked on the network.
 
 ## Data model (JSON, localStorage in v1)
 
@@ -103,9 +99,9 @@ learned = { category: { token: { value: count } }, scope: {…}, visibility: {�
 
 ## Roadmap
 
-1. **v1 (this repo)**: dump → heuristic agent → bubble sizing → lists, household mode, deadline gravity, two profiles + visibility, local learning, export/import.
-2. **Sync**: small backend (Supabase or a worker + KV) so Anna's and Ebbe's phones share one household in real time; real per-user auth makes privacy enforceable.
-3. **Claude classification** endpoint (contract above) with the heuristic as offline fallback.
+1. **v1 (shipped)**: dump → heuristic agent → bubble sizing → lists, household mode, deadline gravity, two profiles + visibility, local learning, export/import.
+2. **v2 (shipped)**: Gemini classification from the device (above); surfacing section (deadline gravity + stale high-dread).
+3. **Sync**: small backend (Supabase or a worker + KV) so Anna's and Ebbe's phones share one household in real time; real per-user auth makes privacy enforceable.
 4. **Voice dump**: Web Speech API where available; keyboard dictation works today.
 5. Maybe: nudges (opt-in only — e.g. "this small dreaded thing is 3 weeks old"), kid accounts, recurring items, shared sizing sessions ("couch triage").
 
@@ -115,4 +111,4 @@ learned = { category: { token: { value: count } }, scope: {…}, visibility: {�
 - Magnitude is felt, not picked from a list.
 - The agent proposes, the human corrects, the agent learns. Corrections are the product's fuel — make correcting *one tap cheaper* than tolerating a mistake.
 - No guilt engine: no red badges for overdue except true deadline gravity; done is archive, not judgment.
-- Pull, not push: the app never nags unless a nudge is explicitly enabled.
+- Surface, never nag: when something matters *now*, the app's own patterns visibly change so you can't help but see it — but nothing ever pushes outside the app into your life.

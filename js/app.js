@@ -2,7 +2,7 @@
 
 import { state, save, inboxItems, memberName } from './store.js';
 import { initSizer, openSizer } from './bubbles.js';
-import { initDump, initHouse, renderLists, renderHouse, renderSettings } from './views.js';
+import { initDump, initHouse, renderLists, renderHouse, renderSettings, renderDumpSurface, allSurfaced } from './views.js';
 
 const $ = (s) => document.querySelector(s);
 let current = 'dump';
@@ -13,6 +13,7 @@ function goto(view) {
   $('#view-' + view).classList.add('active');
   document.querySelectorAll('.tab').forEach(t =>
     t.classList.toggle('active', t.dataset.view === view));
+  if (view === 'dump') renderDumpSurface();
   if (view === 'lists') renderLists();
   if (view === 'house') renderHouse();
   if (view === 'settings') renderSettings();
@@ -26,6 +27,9 @@ function refreshBadge() {
   const b = $('#inboxBadge');
   b.hidden = n === 0;
   b.textContent = n;
+  // the Lists tab itself glows when something is surfacing
+  const surfacing = allSurfaced().length > 0;
+  document.querySelector('[data-view="lists"]').classList.toggle('surfacing', surfacing);
 }
 
 function refreshProfileChip() {
@@ -44,6 +48,7 @@ function init() {
 
   document.addEventListener('stratos:changed', () => {
     refreshBadge();
+    if (current === 'dump') renderDumpSurface();
     if (current === 'lists') renderLists();
     if (current === 'house') renderHouse();
   });
