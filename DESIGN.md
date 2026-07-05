@@ -84,9 +84,17 @@ Capture stays bare (a dump line is just words), but an item can grow rich once i
 - **The bubble interior**: an item with steps *is a bubble containing bubbles*. Opening it — from a list, the takeover, anywhere — enters the parent circle with its steps floating inside, sized by priority. Check a step off in place, tap one to dive deeper (steps can have steps), "＋ step" to add, "details" for the full sheet. A photo dump lands exactly here: tap the filed card and you're inside the job, looking at its visible pieces.
 - **Task → goal**: breaking a task into 2+ real steps quietly promotes it to a **goal** — a thing you're working toward rather than doing. Like every agent move, it's visible and correctable (the Type field is right there).
 
-## Visual language
+## Visual language — the Sorbet system
 
-Deep night-sky ground, serif display type (New York/Georgia) for headings and the brand, quiet translucent panels with hairline borders, a restrained periwinkle→lilac accent. **Ember orange belongs to surfacing alone.** The sizing stage keeps its own sky-to-space depth theme.
+Chosen deliberately; **every future feature obeys these rules.** The point of writing them down is discipline: no new colors, fonts, or shadow styles without amending this section first.
+
+1. **Ground & type**: paper ground (`#FBFBF7`), ink type (`#23262E`). Chrome (tab bar, header, inputs) is neutral — paper, white, hairline `#E9E9DF`. Color belongs to *content*, never to chrome.
+2. **The category law**: every category owns a sorbet swatch — pale tint washes its whole card, the saturated tone is its dot, the deep tone is its heading. Known categories have fixed homes (health=coral, groceries=mint, school=lilac, planning=lemon, finance=sky, wellbeing=rose, home=sage, errands=peach); new categories hash deterministically into the palette so a category keeps its color forever. The palette is the 8 swatches in `views.js catSwatch` — extend the palette, don't invent one-off colors.
+3. **Ember = surfacing, nowhere else.** Surfaced rows (`#FFDDBB` / `#F1B34B` shadow), the takeover field, the tab signal dot. If something else wants orange, it can't have it.
+4. **The motif is the hard offset shadow** (`0 4px 0 <deeper tone>`), pressed down on tap. Never blur-glow on the paper theme; depth is physical, like stickers on paper.
+5. **Two fonts, strict roles**: **Fraunces** (bundled variable, incl. italic) speaks — brand, screen titles, item titles in bubbles, stratum names, takeover. **Outfit** (bundled variable) works — body, chips, buttons, labels. No third font, no faux-bold system fallbacks in designed surfaces.
+6. **The sizing stage arc**: strata climb from warm ground → meadow → sky → sunset → dusk → night → space; the world *darkens as things get bigger*. Stage foreground text derives from the stratum (`--stagefg`).
+7. Monochrome glyphs only (✎ ◯ ☰ ⌂ ⚑ ◷ ↺ ☾ ◐ ◎ ◔ ✦ @) — they inherit text color. No color emoji in chrome.
 
 ## Wellbeing — struggles are not tasks
 

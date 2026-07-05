@@ -16,6 +16,35 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
 let personFilterVal = 'all';
 let wellbeingOpen = false;
 
+// The Sorbet law: every category owns a tint. Whole card washed in the
+// pale tone, saturated dot, deep tone for its heading. Known categories
+// get fixed homes; new ones hash into the palette deterministically so a
+// category keeps its color forever.
+const SWATCHES = [
+  { bg: '#FFE1DA', dot: '#FF7A59', deep: '#B33A1E' }, // coral
+  { bg: '#D9F4E4', dot: '#2FBF8F', deep: '#17714F' }, // mint
+  { bg: '#E8E0FA', dot: '#8B6FE8', deep: '#5B3FC4' }, // lilac
+  { bg: '#FFF3C4', dot: '#F0B000', deep: '#8F6A00' }, // lemon
+  { bg: '#D8EDFB', dot: '#3E9EE3', deep: '#1C6AA6' }, // sky
+  { bg: '#FBDCEC', dot: '#E9629F', deep: '#A83067' }, // rose
+  { bg: '#E9EFD2', dot: '#97A93B', deep: '#5D6B1C' }, // sage
+  { bg: '#FFE6C7', dot: '#FF9E3D', deep: '#A85E10' }, // peach
+];
+const CAT_HOMES = {
+  health: 0, groceries: 1, supplies: 1, school: 2, wellbeing: 5,
+  planning: 3, finance: 4, home: 6, errands: 7, shopping: 7, laundry: 4, clutter: 6,
+};
+export function catSwatch(cat) {
+  const c = (cat || 'general').toLowerCase();
+  let idx = CAT_HOMES[c];
+  if (idx === undefined) {
+    let h = 0;
+    for (let k = 0; k < c.length; k++) h = (h * 31 + c.charCodeAt(k)) >>> 0;
+    idx = h % SWATCHES.length;
+  }
+  return SWATCHES[idx];
+}
+
 // Surfacing: the app visibly changes its patterns when something needs your
 // eyes — never a notification, never a buried section. Two triggers:
 // deadline gravity, and high-dread items that have sat for a week+
@@ -155,6 +184,7 @@ function renderDumpResults(items, viaAgent) {
 function itemCard(it) {
   const el = document.createElement('button');
   el.className = 'filed-card';
+  el.style.background = catSwatch(it.category).bg;
   el.innerHTML =
     '<div class="fc-title">' + esc(it.title) + '</div>' +
     '<div class="fc-chips">' +
@@ -257,6 +287,8 @@ export function renderLists() {
     body.appendChild(h);
     for (const s of surfaced) {
       const row = itemRow(s.i, sort, { noDue: true });
+      row.style.background = 'var(--ember-tint)';
+      row.style.boxShadow = '0 4px 0 var(--ember-shadow)';
       const why = document.createElement('span');
       why.className = 'minichip why';
       why.textContent = s.why;
@@ -272,6 +304,7 @@ export function renderLists() {
     const h = document.createElement('div');
     h.className = 'group-head';
     h.textContent = cat;
+    h.style.color = catSwatch(cat).deep;
     body.appendChild(h);
     for (const i of arr) body.appendChild(itemRow(i, sort));
   }
@@ -296,13 +329,16 @@ function sorter(sort) {
 function itemRow(i, sort, opts = {}) {
   const el = document.createElement('button');
   el.className = 'row' + (i.status === 'done' ? ' done' : '');
+  const sw = catSwatch(i.category);
+  el.style.background = sw.bg;
   const dimForDot = ['priority', 'effort', 'difficulty', 'dread', 'restock'].includes(sort) ? sort : 'priority';
   const u = dimForDot === 'priority' ? effectivePriority(i) : (uOf(i, dimForDot) ?? null);
   const n = state.dims[dimForDot].strata.length;
   const dot = u === null ? 10 : 10 + (u / n) * 26;
   const boost = gravityBoost(i);
   el.innerHTML =
-    '<span class="dot" style="width:' + dot + 'px;height:' + dot + 'px"></span>' +
+    '<span class="dot" style="width:' + dot + 'px;height:' + dot + 'px;' +
+      'background:radial-gradient(circle at 32% 30%, #ffffffb3, ' + sw.dot + ')"></span>' +
     '<span class="row-main"><span class="row-title">' + esc(i.title) + '</span>' +
     '<span class="row-chips">' +
       (i.scope !== state.profile ? chip(esc(memberName(i.scope))) : '') +
@@ -433,6 +469,9 @@ export function openBubble(id) {
   kids.slice(0, slots.length).forEach((k, idx) => {
     const b = document.createElement('button');
     b.className = 'kid-bubble' + (k.status === 'done' ? ' done' : '');
+    const ksw = catSwatch(k.category);
+    b.style.background = ksw.bg;
+    b.style.boxShadow = '0 6px 0 ' + ksw.dot + '55';
     const size = 23 + 15 * (us[idx] / maxU);
     b.style.width = b.style.height = size + '%';
     b.style.left = slots[idx][0] + '%';

@@ -7,6 +7,17 @@ import { state, setMagnitude, uOf, insertStratum, visibleTo } from './store.js';
 import { defaultDimension } from './classify.js';
 
 const MIN_W = 96, MAX_W = 250;   // bubble width across one stratum
+
+// ground → meadow → sky → sunset → dusk → night → space
+const STAGE_THEMES = [
+  ['#F7E8CB', '#EDD5A4', '#6B4E12'],
+  ['#E9F4D3', '#CBE6A6', '#4C6A1D'],
+  ['#D8EFFB', '#A5D9F5', '#1C6AA6'],
+  ['#FFE3C4', '#FFB585', '#A34A0F'],
+  ['#E4D9F7', '#B29CE2', '#4B3390'],
+  ['#4A4487', '#2A2660', '#EAE5FF'],
+  ['#1D1B36', '#0C0B1E', '#D9D3F5'],
+];
 const PEER_SLOTS = [
   [0.18, 0.20], [0.82, 0.18], [0.14, 0.62], [0.86, 0.60], [0.30, 0.82], [0.72, 0.84],
 ];
@@ -141,12 +152,13 @@ function render() {
   els.num.textContent = (idx + 1);
   els.name.textContent = strata[idx].label;
 
-  // depth theme: 0 = ground, n-1 = space
+  // depth theme: warm ground at the bottom stratum, up through sky and
+  // sunset to space at the top — the world darkens as things get bigger
   const depth = idx / Math.max(1, n - 1);
-  const hue = 215 - depth * 20;
-  const light = 26 - depth * 20;
+  const theme = STAGE_THEMES[Math.round(depth * (STAGE_THEMES.length - 1))];
   els.bg.style.background =
-    `radial-gradient(120% 90% at 50% 110%, hsl(${hue} 60% ${light + 14}%) 0%, hsl(${hue + 15} 65% ${Math.max(4, light)}%) 70%)`;
+    `radial-gradient(120% 90% at 50% 110%, ${theme[0]} 0%, ${theme[1]} 75%)`;
+  els.stage.style.setProperty('--stagefg', theme[2]);
 
   for (const c of els.rail.querySelectorAll('.rail-cell')) {
     c.classList.toggle('on', +c.dataset.idx === idx);
