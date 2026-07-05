@@ -72,7 +72,7 @@ export function renderTakeover() {
     b.innerHTML = '<span class="tk-title"></span><span class="tk-why"></span>';
     b.querySelector('.tk-title').textContent = s.i.title;
     b.querySelector('.tk-why').textContent = s.why;
-    b.onclick = () => { el.hidden = true; openSheet(s.i.id); };
+    b.onclick = () => { el.hidden = true; openItem(s.i.id); };
     wrap.appendChild(b);
   });
   $('#takeoverDismiss').onclick = () => { el.hidden = true; };
@@ -167,7 +167,7 @@ function itemCard(it) {
       kidsChip(it) +
       chip(it.visibility === 'private' ? '🔒 private' : '👥 shared') +
     '</div>';
-  el.onclick = () => openSheet(it.id);
+  el.onclick = () => openItem(it.id);
   return el;
 }
 
@@ -320,7 +320,7 @@ function itemRow(i, sort, opts = {}) {
       markDone(i.id, i.status !== 'done');
       changed();
     } else {
-      openSheet(i.id);
+      openItem(i.id);
     }
   };
   return el;
@@ -406,6 +406,66 @@ export function renderHouse() {
   if (!active.length && !done.length) {
     body.innerHTML = '<div class="empty"><div class="empty-art">🏠</div><p>Add groceries, supplies, house tasks…</p></div>';
   }
+}
+
+// ---------- BUBBLE INTERIOR ----------
+// An item with steps opens as a bubble you enter: the steps float inside
+// as their own bubbles, sized by priority. Tap a step to dive in (steps can
+// have steps); check them off in place; "details" opens the full sheet.
+
+export function openItem(id) {
+  if (childrenOf(id).length) openBubble(id);
+  else openSheet(id);
+}
+
+export function openBubble(id) {
+  const i = getItem(id);
+  if (!i) return;
+  const wrap = $('#bubbleWrap');
+  wrap.hidden = false;
+  $('#bubbleTitle').textContent = i.title;
+  const box = $('#bubbleKids');
+  box.innerHTML = '';
+  const kids = childrenOf(id);
+  const slots = [[50, 30], [28, 52], [72, 52], [36, 76], [67, 78], [50, 55], [25, 30], [75, 30], [50, 90]];
+  const us = kids.map(k => effectivePriority(k));
+  const maxU = Math.max(...us, 0.1);
+  kids.slice(0, slots.length).forEach((k, idx) => {
+    const b = document.createElement('button');
+    b.className = 'kid-bubble' + (k.status === 'done' ? ' done' : '');
+    const size = 23 + 15 * (us[idx] / maxU);
+    b.style.width = b.style.height = size + '%';
+    b.style.left = slots[idx][0] + '%';
+    b.style.top = slots[idx][1] + '%';
+    b.style.animationDuration = (6 + (idx % 4) * 1.6) + 's';
+    b.style.animationDelay = (-idx * 1.1) + 's';
+    const check = document.createElement('span');
+    check.className = 'kb-check';
+    check.textContent = k.status === 'done' ? '✓' : '';
+    check.onclick = (e) => {
+      e.stopPropagation();
+      markDone(k.id, k.status !== 'done');
+      openBubble(id);
+      changed();
+    };
+    const t = document.createElement('span');
+    t.className = 'kb-title';
+    t.textContent = k.title;
+    b.append(check, t);
+    b.onclick = () => { wrap.hidden = true; openItem(k.id); };
+    box.appendChild(b);
+  });
+  $('#bubbleDetails').onclick = () => { wrap.hidden = true; openSheet(id); };
+  $('#bubbleAddStep').onclick = () => {
+    const t = prompt('New step inside “' + i.title + '”');
+    if (t && t.trim()) {
+      addItem({ title: t.trim(), type: 'task', scope: i.scope, category: i.category, visibility: i.visibility, parent: i.id });
+      changed();
+      openBubble(id);
+    }
+  };
+  $('#bubbleClose').onclick = () => { wrap.hidden = true; };
+  $('#bubbleShade').onclick = () => { wrap.hidden = true; };
 }
 
 // ---------- DETAIL SHEET ----------
@@ -621,7 +681,7 @@ function renderSheetKids(i) {
     const title = document.createElement('button');
     title.className = 'kid-title';
     title.textContent = k.title;
-    title.onclick = () => openSheet(k.id); // dive into the step's own sheet
+    title.onclick = () => openItem(k.id); // dive in (steps can have steps)
     row.append(check, title);
     box.appendChild(row);
   }

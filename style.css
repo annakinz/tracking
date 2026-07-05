@@ -303,6 +303,50 @@ select {
   backdrop-filter: blur(6px);
 }
 
+/* ---------- bubble interior ---------- */
+#bubbleWrap { position: fixed; inset: 0; z-index: 45; }
+#bubbleShade { position: absolute; inset: 0; background: rgba(4, 6, 16, .74); backdrop-filter: blur(5px); }
+#bubbleCircle {
+  position: absolute; left: 50%; top: 45%; transform: translate(-50%, -50%);
+  width: min(94vw, 76vh); height: min(94vw, 76vh);
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 26%, rgba(255,255,255,.13), rgba(150,181,255,.09) 55%, rgba(199,165,255,.05));
+  border: 1.5px solid rgba(255,255,255,.32);
+  box-shadow: 0 0 80px rgba(150,170,255,.22), inset 0 0 60px rgba(255,255,255,.05);
+}
+#bubbleTitle {
+  position: absolute; top: 6.5%; left: 12%; right: 12%; text-align: center;
+  font-family: var(--serif); font-size: 17px; color: #fff; line-height: 1.25;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+#bubbleKids { position: absolute; inset: 0; }
+.kid-bubble {
+  position: absolute; transform: translate(-50%, -50%); border-radius: 50%;
+  background: radial-gradient(circle at 32% 28%, #ffffff2c, #96b5ff52 50%, #c7a5ff3a);
+  border: 1px solid rgba(255,255,255,.38);
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  padding: 8%; overflow: visible; color: #fff; font-size: 11.5px; line-height: 1.15; font-weight: 600;
+  animation: tkfloat ease-in-out infinite alternate;
+  box-shadow: 0 0 26px rgba(150, 170, 255, .22);
+}
+.kid-bubble.done { opacity: .35; }
+.kid-bubble.done .kb-title { text-decoration: line-through; }
+.kb-title {
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.kb-check {
+  position: absolute; top: 2%; right: 4%;
+  width: 22px; height: 22px; border-radius: 50%;
+  border: 1px solid rgba(255,255,255,.5); font-size: 11px;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; background: rgba(10, 14, 30, .5);
+}
+#bubbleBar {
+  position: absolute; bottom: calc(26px + env(safe-area-inset-bottom, 0px));
+  left: 0; right: 0; display: flex; gap: 10px; justify-content: center;
+}
+#bubbleBar .chip { color: var(--ink); background: rgba(20, 26, 51, .75); backdrop-filter: blur(8px); }
+
 /* ---------- detail sheet ---------- */
 #sheetWrap { position: fixed; inset: 0; z-index: 40; }
 #sheetShade { position: absolute; inset: 0; background: rgba(4, 6, 16, .6); }

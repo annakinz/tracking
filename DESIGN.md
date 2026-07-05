@@ -80,7 +80,8 @@ Capture stays bare (a dump line is just words), but an item can grow rich once i
 
 - **Notes**: free text on every item. URLs pasted anywhere in the notes automatically become tappable link chips (hostname shown). Items with content show a 📎 in lists.
 - **Photos**: attach images (the broken part, the permission slip, the screenshot). Client-side downscaled (~1000px JPEG) and stored inline for now; the sync milestone moves media to real storage.
-- **Steps**: any item can be broken into subtasks — real items with their own notes, dates, sizing, and even their own steps. Steps live inside the parent's sheet (checkable, tappable to dive in), not as top-level list rows; the parent shows progress (◔ 2/5). Steps can still *surface* on their own merits (a step's due date is a real due date).
+- **Steps**: any item can be broken into subtasks — real items with their own notes, dates, sizing, and even their own steps. Steps live inside the parent, not as top-level list rows; the parent shows progress (◔ 2/5). Steps can still *surface* on their own merits (a step's due date is a real due date).
+- **The bubble interior**: an item with steps *is a bubble containing bubbles*. Opening it — from a list, the takeover, anywhere — enters the parent circle with its steps floating inside, sized by priority. Check a step off in place, tap one to dive deeper (steps can have steps), "＋ step" to add, "details" for the full sheet. A photo dump lands exactly here: tap the filed card and you're inside the job, looking at its visible pieces.
 - **Task → goal**: breaking a task into 2+ real steps quietly promotes it to a **goal** — a thing you're working toward rather than doing. Like every agent move, it's visible and correctable (the Type field is right there).
 
 ## Visual language
