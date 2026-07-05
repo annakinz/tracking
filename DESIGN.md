@@ -104,6 +104,14 @@ The prompt carries: today's date, who is dumping, the family roster with ids, ca
 
 Fallback chain: no key / offline / any API error → the local heuristic classifier. The app is never blocked on the network.
 
+### Photo dump (vision)
+Gemini is multimodal, so the same key reads pictures: photograph the mess instead of describing it. The **📷 Photo dump** button on the Dump screen sends the (downscaled) image plus any typed context, and the agent returns one parent task named for the overall job ("Organize the hallway closet") **auto-broken into the concrete steps it can actually see** ("put away the clean laundry in the blue IKEA bag", "return the shoes to the rack") — instructed to name real visible items and never invent work it can't see. The photo attaches to the parent, the observation lands in its notes, and 2+ steps promote it to a goal as usual. Without a key the photo still becomes a single task with the image attached.
+
+### What the agent knows about this household
+Every Gemini prompt (text and photo) carries, beyond the family roster and corrections log:
+- **Habit context**: recently completed items and the learned recurring rhythms — the model sees what this family actually does and how often.
+- **Household notes**: a free-text field in Settings, written by the family for the agent and treated as ground truth ("blue IKEA + rainbow bags = clean laundry to put away; bamboo baskets = dirty"). This is the agent's memory, human-curated for now; a later milestone lets the agent *propose* additions to it from patterns it notices, with the family approving.
+
 ## Data model (JSON, localStorage in v1)
 
 ```js

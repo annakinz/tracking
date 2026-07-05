@@ -6,7 +6,7 @@ import {
   inboxItems, childrenOf, exportJSON, importJSON, resetAll, DIM_ORDER,
 } from './store.js';
 import { parseDump, classifyOne } from './classify.js';
-import { agentClassify, getKey, setKey } from './agent.js';
+import { agentClassify, agentPhotoTasks, getKey, setKey } from './agent.js';
 import { openSizer } from './bubbles.js';
 
 const $ = (s) => document.querySelector(s);
@@ -101,6 +101,41 @@ export function initDump() {
     renderDumpResults(made, viaAgent);
     changed();
   });
+
+  // Photo dump: photograph the mess; Gemini names the job and breaks it
+  // into the concrete steps it can actually see. Any dump text goes along
+  // as context. Without a key (or on failure) the photo still becomes a task.
+  $('#photoDumpFile').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    e.target.value = '';
+    const label = document.querySelector('.photodump');
+    label.classList.add('busy');
+    label.firstChild.textContent = '📷 Looking at the photo… ';
+    try {
+      const dataUrl = await shrinkImage(f, 1200);
+      const res = getKey() ? await agentPhotoTasks(dataUrl, $('#dumpText').value.trim()) : null;
+      let parent;
+      if (res) {
+        parent = addItem({ title: res.title, type: 'task', scope: res.scope, category: res.category, notes: res.note });
+        for (const s of res.steps) {
+          addItem({ title: s, type: 'task', scope: parent.scope, category: parent.category, visibility: parent.visibility, parent: parent.id });
+        }
+        if (res.steps.length >= 2) parent.type = 'goal';
+      } else {
+        parent = addItem({ title: 'Sort out what’s in the photo', type: 'task', scope: 'house', category: 'home' });
+      }
+      (parent.media || (parent.media = [])).push({ id: uid(), dataUrl });
+      save();
+      $('#dumpText').value = '';
+      renderDumpResults([parent], !!res);
+      changed();
+    } catch {
+      alert("Couldn't read that image.");
+    }
+    label.classList.remove('busy');
+    label.firstChild.textContent = '📷 Photo dump — point me at the mess ';
+  });
 }
 
 function renderDumpResults(items, viaAgent) {
@@ -126,6 +161,7 @@ function itemCard(it) {
       (it.due ? chip('📅 ' + it.due) : '') +
       (it.source ? chip('🏪 ' + esc(it.source)) : '') +
       (it.loop?.every ? chip('🔁 ~' + it.loop.every + 'd loop') : '') +
+      kidsChip(it) +
       chip(it.visibility === 'private' ? '🔒 private' : '👥 shared') +
     '</div>';
   el.onclick = () => openSheet(it.id);
@@ -569,6 +605,9 @@ export function renderSettings() {
     '<div class="group-head">agent</div>' +
     '<label class="famrow">🔑 <input id="setGemini" type="password" placeholder="Gemini API key (free at aistudio.google.com/apikey)" value="' + esc(getKey()) + '"></label>' +
     '<p class="hint">With a key, dumps are filed by Gemini (free tier, called straight from this device — the key never leaves it and is not included in exports). Without one, built-in rules do the filing. Your corrections teach both.</p>' +
+    '<div class="group-head">household notes for the agent</div>' +
+    '<textarea id="setNotes" placeholder="Facts the agent should know, e.g. “blue IKEA + rainbow bags = clean laundry to put away; bamboo baskets = dirty laundry”">' + esc(state.agentNotes || '') + '</textarea>' +
+    '<p class="hint">Included in every Gemini prompt (text and photo dumps). Write how your home actually works — the agent treats it as ground truth.</p>' +
     '<div class="group-head">data</div>' +
     '<div class="setrow"><button id="setExport" class="chip">Export JSON</button> ' +
     '<label class="chip">Import <input type="file" id="setImport" accept=".json" hidden></label> ' +
@@ -582,6 +621,7 @@ export function renderSettings() {
     };
   });
   $('#setGemini').onchange = (e) => { setKey(e.target.value); };
+  $('#setNotes').onchange = (e) => { state.agentNotes = e.target.value.trim(); save(); };
   $('#setSwitch').onclick = () => {
     state.profile = state.profile === 'anna' ? 'ebbe' : 'anna';
     save(); changed(); renderSettings();

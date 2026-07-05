@@ -17,10 +17,26 @@ export const setKey = (k) => {
   else localStorage.removeItem(KEY_STORE);
 };
 
+// What this family actually does — completed and recurring items teach the
+// model the household's patterns (which bags are laundry, what piles up where).
+function habitContext() {
+  const done = state.items.filter(i => i.status === 'done').slice(-25).map(i => i.title);
+  const loops = state.items.filter(i => i.loop?.every).slice(-15).map(i => i.title + ' (~every ' + i.loop.every + 'd)');
+  let out = '';
+  if (done.length) out += '\nRecently completed by this family: ' + done.join('; ');
+  if (loops.length) out += '\nRecurring rhythms: ' + loops.join('; ');
+  if (state.agentNotes) out += '\nHousehold notes (written by the family for you — treat as ground truth):\n' + state.agentNotes;
+  return out;
+}
+
+function familyContext() {
+  return state.family.map(f =>
+    `- id "${f.id}" = ${f.name}${f.user ? ' (adult user)' : f.id === 'house' ? ' (the household itself: groceries, supplies, house tasks)' : ' (child)'}`).join('\n');
+}
+
 function buildPrompt(rawText) {
   const today = new Date();
-  const family = state.family.map(f =>
-    `- id "${f.id}" = ${f.name}${f.user ? ' (adult user)' : f.id === 'house' ? ' (the household itself: groceries, supplies, house tasks)' : ' (child)'}`).join('\n');
+  const family = familyContext();
   const cats = [...new Set(state.items.map(i => i.category))].join(', ') || 'none yet';
   const corrections = (state.corrections || []).slice(-30)
     .map(c => `- "${c.title}": ${c.field} should be "${c.to}"`).join('\n');
@@ -48,7 +64,7 @@ Rules:
 - "source": where it's bought/ordered when stated or strongly implied (e.g. Netto,
   Føtex, Rema 1000, Bilka, Lidl, Amazon, Wolt, Nemlig, Apotek, IKEA), else "".
 - "raw": the exact fragment of the dump this item came from.
-${corrections ? '\nThe user has corrected past filings — follow these patterns:\n' + corrections : ''}
+${corrections ? '\nThe user has corrected past filings — follow these patterns:\n' + corrections : ''}${habitContext()}
 
 Dump to file:
 """
@@ -101,12 +117,13 @@ function sanitize(o) {
   return c;
 }
 
-// Returns classified items, or null (caller falls back to heuristics).
-export async function agentClassify(rawText) {
+// Shared Gemini call: parts in, schema-constrained JSON out, null on any
+// failure so callers can fall back gracefully.
+async function callGemini(parts, schema, timeoutMs = 12000) {
   const key = getKey();
   if (!key) return null;
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 12000);
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${encodeURIComponent(key)}`,
@@ -115,10 +132,10 @@ export async function agentClassify(rawText) {
         headers: { 'content-type': 'application/json' },
         signal: ctrl.signal,
         body: JSON.stringify({
-          contents: [{ parts: [{ text: buildPrompt(rawText) }] }],
+          contents: [{ parts }],
           generationConfig: {
             responseMimeType: 'application/json',
-            responseSchema: RESPONSE_SCHEMA,
+            responseSchema: schema,
             temperature: 0.2,
           },
         }),
@@ -128,15 +145,68 @@ export async function agentClassify(rawText) {
       return null;
     }
     const data = await res.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    const arr = JSON.parse(text);
-    if (!Array.isArray(arr) || !arr.length) return null;
-    const items = arr.map(sanitize).filter(Boolean);
-    return items.length ? items : null;
+    return JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text);
   } catch (e) {
-    console.warn('Stratos agent: falling back to built-in rules —', e.message);
+    console.warn('Stratos agent: falling back —', e.message);
     return null;
   } finally {
     clearTimeout(timer);
   }
+}
+
+// Returns classified items, or null (caller falls back to heuristics).
+export async function agentClassify(rawText) {
+  const arr = await callGemini([{ text: buildPrompt(rawText) }], RESPONSE_SCHEMA);
+  if (!Array.isArray(arr) || !arr.length) return null;
+  const items = arr.map(sanitize).filter(Boolean);
+  return items.length ? items : null;
+}
+
+// Photo → task with auto-breakdown. Show Gemini a picture of the mess and
+// get back one parent task plus the concrete steps visible in the image.
+const PHOTO_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    title: { type: 'STRING' },
+    scope: { type: 'STRING' },
+    category: { type: 'STRING' },
+    note: { type: 'STRING' },
+    steps: { type: 'ARRAY', items: { type: 'STRING' } },
+  },
+  required: ['title', 'steps'],
+};
+
+export async function agentPhotoTasks(dataUrl, hint) {
+  const prompt = `You are the filing agent for a family life-tracking app. The user photographs
+a situation at home (clutter, a mess, a pile, a broken thing) instead of typing it.
+Look carefully at the photo and produce ONE parent task plus concrete steps.
+
+Family members (use ids for "scope"; default "house" for home situations):
+${familyContext()}
+
+Rules:
+- "title": short name for the overall job (e.g. "Organize the hallway closet").
+- "steps": the SPECIFIC actions visible in the photo, one per actual thing that
+  needs doing — name the actual items you can see ("put away the clean laundry
+  in the blue IKEA bag", "return the shoes by the door to the rack"). 2–8 steps,
+  most obvious first. Don't invent work you can't see.
+- "note": one or two sentences on what you observed, useful for later.
+- "category": short lowercase category (home, laundry, clutter, …).
+${hint ? '\nThe user added context with the photo: "' + hint + '"' : ''}${habitContext()}`;
+
+  const b64 = (dataUrl.split(',')[1] || '');
+  const out = await callGemini([
+    { text: prompt },
+    { inline_data: { mime_type: 'image/jpeg', data: b64 } },
+  ], PHOTO_SCHEMA, 20000);
+  if (!out || !out.title || !Array.isArray(out.steps)) return null;
+  let scope = out.scope;
+  if (!state.family.some(f => f.id === scope)) scope = 'house';
+  return {
+    title: out.title.trim(),
+    scope,
+    category: (out.category || 'home').toLowerCase().trim(),
+    note: (out.note || '').trim(),
+    steps: out.steps.map(s => String(s).trim()).filter(Boolean).slice(0, 10),
+  };
 }

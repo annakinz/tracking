@@ -123,6 +123,13 @@ h1 { font-family: var(--serif); font-weight: 600; font-size: 27px; letter-spacin
   font-size: 16px; line-height: 1.55;
 }
 #dumpText:focus { outline: none; border-color: rgba(150, 181, 255, .5); }
+.photodump { display: block; text-align: center; margin-top: 10px; padding: 12px; color: var(--ink); }
+.photodump.busy { opacity: .6; pointer-events: none; }
+#setNotes {
+  width: 100%; min-height: 78px; resize: vertical;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 13px; padding: 12px; color: var(--ink); font-size: 14px; line-height: 1.5;
+}
 .filed-card {
   display: block; width: 100%; text-align: left;
   background: var(--panel); border: 1px solid var(--line);
