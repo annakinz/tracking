@@ -3,6 +3,7 @@
 import { state, save, inboxItems, memberName, tickLoops } from './store.js';
 import { initSizer, openSizer, openUniverse } from './bubbles.js';
 import { initDump, initHouse, renderLists, renderHouse, renderSettings, renderTakeover, refreshDumpResults, allSurfaced, openSheet } from './views.js';
+import { syncNow, syncConfigured } from './gsync.js';
 
 const $ = (s) => document.querySelector(s);
 let current = 'dump';
@@ -55,6 +56,18 @@ function init() {
 
   // tapping the hero bubble in the sizer opens its full edit sheet
   document.addEventListener('stratos:edit', (e) => openSheet(e.detail));
+
+  // --- Google Drive sync scheduling ---
+  let syncTimer = null;
+  const trySync = () => { if (syncConfigured()) syncNow(); };
+  document.addEventListener('stratos:changed', () => {
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(trySync, 4000); // debounce pushes after edits
+  });
+  window.addEventListener('focus', trySync);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) trySync(); });
+  setInterval(trySync, 60000);
+  trySync(); // on load
 
   if (!state.profile) {
     const fr = $('#firstRun');

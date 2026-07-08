@@ -1,8 +1,8 @@
-const CACHE = 'stratos-v24';
+const CACHE = 'stratos-v25';
 const ASSETS = [
   './', 'index.html', 'style.css', 'manifest.webmanifest', 'icon.svg',
   'fonts/fraunces.woff2', 'fonts/fraunces-italic.woff2', 'fonts/outfit.woff2',
-  'js/app.js', 'js/store.js', 'js/classify.js', 'js/bubbles.js', 'js/views.js', 'js/agent.js',
+  'js/app.js', 'js/store.js', 'js/classify.js', 'js/bubbles.js', 'js/views.js', 'js/agent.js', 'js/gsync.js',
 ];
 
 self.addEventListener('install', (e) => {

@@ -4,7 +4,7 @@ const DB_KEY = 'stratos.v1';
 
 // Build number — bump together with the service-worker CACHE in sw.js on
 // every deploy. Shown in Settings so you can confirm your phone is current.
-export const BUILD = '24';
+export const BUILD = '25';
 
 export const DIM_ORDER = ['priority', 'effort', 'difficulty', 'dread', 'restock'];
 
@@ -34,8 +34,14 @@ function freshState() {
     items: [],
     learned: {}, // field -> token -> value -> count
     seq: 1,
+    // per-file deletion/unshare tombstones (id -> ts) for Drive sync merge
+    syncTomb: { shared: {}, private: {} },
   };
 }
+
+// called after any change so sync can merge by "newest wins"
+function touch(item) { if (item) item.updatedAt = Date.now(); }
+function tombFor(kind) { return (state.syncTomb || (state.syncTomb = { shared: {}, private: {} }))[kind]; }
 
 export let state = load();
 
@@ -81,6 +87,7 @@ export function addItem(fields) {
     // previously sized -> straight to active with its magnitudes; else re-size
     existing.status = Object.keys(existing.dims || {}).length ? 'active' : 'inbox';
     existing.doneAt = null;
+    touch(existing);
     save();
     return existing;
   }
@@ -88,6 +95,7 @@ export function addItem(fields) {
   const item = {
     id: uid(),
     createdAt: Date.now(),
+    updatedAt: Date.now(),
     createdBy: state.profile,
     raw: fields.raw || fields.title,
     title: fields.title,
@@ -133,6 +141,11 @@ export function tickLoops() {
 export function getItem(id) { return state.items.find(i => i.id === id); }
 
 export function deleteItem(id) {
+  const now = Date.now();
+  // tombstone the item and its steps in both files so the delete propagates
+  for (const i of state.items) {
+    if (i.id === id || i.parent === id) { tombFor('shared')[i.id] = now; tombFor('private')[i.id] = now; }
+  }
   state.items = state.items.filter(i => i.id !== id && i.parent !== id);
   save();
 }
@@ -146,6 +159,7 @@ export function childrenOf(id) {
 export function updateItem(id, fields) {
   const item = getItem(id);
   if (!item) return;
+  const oldVis = item.visibility;
   const toks = tokens(item.title);
   for (const [k, v] of Object.entries(fields)) {
     if (['type', 'scope', 'category', 'visibility', 'source'].includes(k) && v && item[k] !== v) {
@@ -157,6 +171,12 @@ export function updateItem(id, fields) {
     }
     item[k] = v;
   }
+  // if visibility flipped, tell the file it left to drop this item (no leak)
+  if (fields.visibility && fields.visibility !== oldVis) {
+    if (oldVis === 'shared') tombFor('shared')[id] = Date.now();
+    else tombFor('private')[id] = Date.now();
+  }
+  touch(item);
   save();
   return item;
 }
@@ -166,6 +186,7 @@ export function setMagnitude(id, dimId, stratumId, frac) {
   if (!item) return;
   item.dims[dimId] = { s: stratumId, f: frac, at: Date.now() };
   if (item.status === 'inbox') item.status = 'active';
+  touch(item);
   save();
 }
 
@@ -174,6 +195,7 @@ export function markDone(id, done = true) {
   if (!item) return;
   item.status = done ? 'done' : 'active';
   item.doneAt = done ? Date.now() : null;
+  touch(item);
   save();
 }
 
@@ -309,3 +331,56 @@ export function resetAll() {
   state = freshState();
   save();
 }
+
+// ---------- Drive sync: snapshot & merge ----------
+// Two payloads: 'shared' (visibility shared, goes in the household file both
+// people can read) and 'private' (this profile's private items, in their own
+// Drive). Media/agent guesses are stripped to keep the files small.
+
+function slim(it) {
+  const { media, agentGuess, ...rest } = it;
+  return rest;
+}
+
+export function syncSnapshot(kind, me) {
+  const items = {};
+  for (const it of state.items) {
+    const mine = it.createdBy === me;
+    if (kind === 'shared' && it.visibility === 'shared') items[it.id] = slim(it);
+    else if (kind === 'private' && it.visibility === 'private' && mine) items[it.id] = slim(it);
+  }
+  return { v: 1, items, deleted: { ...tombFor(kind) }, at: Date.now() };
+}
+
+// Merge a downloaded file into local state; returns true if anything changed.
+export function applySync(kind, remote) {
+  if (!remote || typeof remote !== 'object') return false;
+  let changed = false;
+  const tomb = tombFor(kind);
+  for (const [id, ts] of Object.entries(remote.deleted || {})) {
+    if (!tomb[id] || ts > tomb[id]) tomb[id] = ts;
+    const local = getItem(id);
+    if (local && (local.updatedAt || 0) <= ts) {
+      state.items = state.items.filter(x => x.id !== id);
+      changed = true;
+    }
+  }
+  for (const it of Object.values(remote.items || {})) {
+    if (tomb[it.id] && tomb[it.id] >= (it.updatedAt || 0)) continue; // deleted newer locally
+    const local = getItem(it.id);
+    if (!local) { state.items.push({ ...it, media: [] }); changed = true; }
+    else if ((it.updatedAt || 0) > (local.updatedAt || 0)) {
+      const idx = state.items.findIndex(x => x.id === it.id);
+      state.items[idx] = { ...it, media: local.media || [] }; // keep local photos
+      changed = true;
+    }
+  }
+  // prune tombstones older than 90 days so the maps don't grow forever
+  const cutoff = Date.now() - 90 * 86400e3;
+  for (const [id, ts] of Object.entries(tomb)) if (ts < cutoff) delete tomb[id];
+  if (changed) save();
+  return changed;
+}
+
+export function syncConfig() { return state.sync || (state.sync = {}); }
+export function saveState() { save(); }

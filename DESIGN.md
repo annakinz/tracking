@@ -171,6 +171,17 @@ dims  = { priority: { label, strata: [{id, label}, …] }, … }   // insertable
 learned = { category: { token: { value: count } }, scope: {…}, visibility: {…}, type: {…} }
 ```
 
+## Sync — Google Drive, no backend
+
+Two phones share one household via **client-side Google Drive**, no server:
+- Sign in with Google (narrow **`drive.file`** scope — the app only ever sees files it makes/opens).
+- **Shared items** live in one `stratos-household.json` file both people can read/write (created by one, shared to the other; the joiner picks it via the Google Picker).
+- **Private items** back up to a `stratos-private.json` file in *each person's own* Drive — never shared, so they cross your own devices without the other seeing them.
+- **Merge is per-item newest-wins**: every item carries `updatedAt`; deletes and visibility-flips leave `syncTomb` tombstones (per file) so removals propagate and a shared→private flip drops the item from the household file (no leak). Whole-file clobbering never happens. Media (photos) and agent guesses are stripped from the synced payload to keep files small (photos stay device-local for now).
+- Triggers: on load, on focus, debounced after edits, and every 60s. Setup: paste a Google **client ID + API key** (from a free Google Cloud project) into Settings, then Create/Join household.
+
+Config lives in `state.sync`; the merge core (`syncSnapshot`/`applySync` in store.js) is pure and unit-tested; the OAuth/Drive I/O is in `gsync.js`.
+
 ## Platform & architecture
 
 - **PWA**, installable, offline-first (service worker, cache-first). No build step, no dependencies: plain HTML/CSS/JS modules — trivially hostable (GitHub Pages), trivially rebuildable.

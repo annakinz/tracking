@@ -8,6 +8,7 @@ import {
 import { parseDump, classifyOne } from './classify.js';
 import { agentClassify, agentPhotoTasks, getKey, setKey } from './agent.js';
 import { openSizer } from './bubbles.js';
+import * as gsync from './gsync.js';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
@@ -847,6 +848,42 @@ export function openSheet(id) {
   };
 }
 
+// ---------- sync settings ----------
+
+function syncSettingsHtml() {
+  const c = state.sync || (state.sync = {});
+  const connected = gsync.isSignedIn();
+  const last = c.lastSync ? new Date(c.lastSync).toLocaleTimeString() : 'never';
+  return (
+    '<label class="famrow"><input id="syClient" placeholder="Google client ID (…apps.googleusercontent.com)" value="' + esc(c.clientId || '') + '"></label>' +
+    '<label class="famrow"><input id="syKey" placeholder="Google API key (for joining a shared household)" value="' + esc(c.apiKey || '') + '"></label>' +
+    '<div class="setrow"><button id="syConnect" class="chip">' + (connected ? '✓ Connected' : 'Connect Google') + '</button>' +
+    '<button id="sySyncNow" class="chip">Sync now</button>' +
+    '<span class="hint" id="syStatus">last sync: ' + last + '</span></div>' +
+    '<div class="setrow">' +
+      (c.householdFileId
+        ? '<button id="syInvite" class="chip">Invite Ebbe (email)</button> <span class="hint">household connected</span>'
+        : '<button id="syCreate" class="chip">Create household</button> <button id="syJoin" class="chip">Join Ebbe’s</button>') +
+    '</div>' +
+    '<label class="toggle" style="padding:6px 0"><input type="checkbox" id="syPriv"' + (c.privateBackup !== false ? ' checked' : '') + '> back up my private items to my own Drive</label>' +
+    '<p class="hint">Shared items sync to a household file both of you can read; private items back up only to your own Drive. Set up a free Google Cloud project (client ID + API key) — see the chat instructions.</p>'
+  );
+}
+
+function wireSyncSettings() {
+  const c = state.sync || (state.sync = {});
+  const setStatus = (s) => { const el = $('#syStatus'); if (el) el.textContent = s; };
+  gsync.onSyncStatus((s) => setStatus(s === 'ok' ? 'synced ' + new Date().toLocaleTimeString() : s === 'syncing' ? 'syncing…' : s.startsWith('error') ? s.slice(6) : s));
+  $('#syClient').onchange = (e) => { c.clientId = e.target.value.trim(); save(); };
+  $('#syKey').onchange = (e) => { c.apiKey = e.target.value.trim(); save(); };
+  $('#syPriv').onchange = (e) => { c.privateBackup = e.target.checked; save(); };
+  $('#syConnect').onclick = async () => { try { await gsync.connect(); renderSettings(); } catch (e) { alert(e.message); } };
+  $('#sySyncNow').onclick = async () => { await gsync.syncNow(); renderSettings(); };
+  const cr = $('#syCreate'); if (cr) cr.onclick = async () => { try { await gsync.createHousehold(); await gsync.syncNow(); renderSettings(); alert('Household created — now Invite Ebbe.'); } catch (e) { alert(e.message); } };
+  const jn = $('#syJoin'); if (jn) jn.onclick = async () => { try { const id = await gsync.joinHousehold(); if (id) { await gsync.syncNow(); renderSettings(); } } catch (e) { alert(e.message); } };
+  const iv = $('#syInvite'); if (iv) iv.onclick = async () => { const em = prompt('Ebbe’s Google email:'); if (em) { try { await gsync.invite(em.trim()); alert('Invited ' + em); } catch (e) { alert(e.message); } } };
+}
+
 // ---------- sheet helpers ----------
 
 // One-tap prefilled Google Calendar event (all-day on the due date).
@@ -945,6 +982,7 @@ export function renderSettings() {
     '<div class="group-head">household notes for the agent</div>' +
     '<textarea id="setNotes" placeholder="Facts the agent should know, e.g. “blue IKEA + rainbow bags = clean laundry to put away; bamboo baskets = dirty laundry”">' + esc(state.agentNotes || '') + '</textarea>' +
     '<p class="hint">Included in every Gemini prompt (text and photo dumps). Write how your home actually works — the agent treats it as ground truth.</p>' +
+    '<div class="group-head">sync · google drive</div>' + syncSettingsHtml() +
     '<div class="group-head">data</div>' +
     '<div class="setrow"><button id="setExport" class="chip">Export JSON</button> ' +
     '<label class="chip">Import <input type="file" id="setImport" accept=".json" hidden></label> ' +
@@ -963,6 +1001,7 @@ export function renderSettings() {
   });
   $('#setGemini').onchange = (e) => { setKey(e.target.value); };
   $('#setNotes').onchange = (e) => { state.agentNotes = e.target.value.trim(); save(); };
+  wireSyncSettings();
   $('#setSwitch').onclick = () => {
     state.profile = state.profile === 'anna' ? 'ebbe' : 'anna';
     save(); changed(); renderSettings();
