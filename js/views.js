@@ -515,6 +515,11 @@ export function openBubble(id) {
     box.appendChild(b);
   });
   $('#bubbleDetails').onclick = () => { wrap.hidden = true; openSheet(id); };
+  $('#bubbleResize').onclick = () => {
+    wrap.hidden = true;
+    window.stratosGoto('size');
+    openSizer([getItem(id)], () => window.stratosGoto('lists'), 'priority');
+  };
   $('#bubbleAddStep').onclick = () => {
     const t = prompt('New step inside “' + i.title + '”');
     if (t && t.trim()) {
@@ -547,10 +552,17 @@ export function openSheet(id) {
     const label = m ? (() => {
       const idx = state.dims[d].strata.findIndex(s => s.id === m.s);
       return idx >= 0 ? (idx + 1) + ' · ' + esc(state.dims[d].strata[idx].label) : '—';
-    })() : '—';
+    })() : 'not sized';
     return '<button class="dimrow" data-resize="' + d + '"><span>' + esc(state.dims[d].label) +
-      '</span><b>' + label + '</b><span class="hint">resize ›</span></button>';
+      '</span><b>' + label + '</b><span class="resize-cue">◯ resize</span></button>';
   }).join('');
+
+  // your categories as one-tap chips (robust where the dropdown is flaky)
+  const catChips = cats.length
+    ? '<div class="catchips">' + cats.slice(0, 12).map(c =>
+        '<button type="button" class="minichip catchip' + (c === i.category ? ' on' : '') +
+        '" data-cat="' + esc(c) + '">' + esc(c) + '</button>').join('') + '</div>'
+    : '';
 
   sheet.innerHTML =
     '<div class="sheet-grab"></div>' +
@@ -568,8 +580,11 @@ export function openSheet(id) {
         (i.loop?.every ?? '') + '"> days' +
         (i.loop?.auto && i.loop?.every ? ' <span class="hint">(learned)</span>' : '') + '</label>' +
     '</div>' +
+    catChips +
     '<button id="shVis" class="chip big-chip">' + (i.visibility === 'private' ? 'Private — only me' : 'Shared with Ebbe & me') + '</button>' +
     (i.due ? '<a class="chip big-chip cal" target="_blank" rel="noopener" href="' + gcalUrl(i) + '">↗ Add to Google Calendar</a>' : '') +
+    '<div class="group-head">magnitude · tap to resize</div>' +
+    '<div class="dimrows">' + dimRows + '</div>' +
     '<div class="group-head">notes</div>' +
     '<textarea id="shNotes" placeholder="Notes, links, anything — paste a URL and it becomes a chip below">' + esc(i.notes || '') + '</textarea>' +
     '<div id="shLinks" class="linkrow">' + linkChips(i.notes) + '</div>' +
@@ -580,11 +595,18 @@ export function openSheet(id) {
     '<div id="shKids"></div>' +
     '<div class="quickadd subadd"><input id="shSubInput" placeholder="Break it into steps…">' +
     '<button id="shSubAdd" class="chip">Add</button></div>' +
-    '<div class="dimrows">' + dimRows + '</div>' +
     '<div class="sheet-actions">' +
       '<button id="shDone" class="primary">' + (i.status === 'done' ? '↺ Not done' : '✓ Done') + '</button>' +
       '<button id="shDelete" class="danger">Delete</button>' +
     '</div>';
+
+  // one-tap category chips set the field and highlight
+  sheet.querySelectorAll('.catchip').forEach(c => {
+    c.onclick = () => {
+      $('#shCat').value = c.dataset.cat;
+      sheet.querySelectorAll('.catchip').forEach(x => x.classList.toggle('on', x === c));
+    };
+  });
 
   // live link chips as you type/paste
   $('#shNotes').addEventListener('input', () => {

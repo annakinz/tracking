@@ -171,11 +171,15 @@ export function classifyOne(raw) {
   }
 
   // learned corrections override everything (that's the point):
-  // exact phrase memory first (one correction is enough), then
-  // token generalization (needs corroboration to beat the rules)
+  // exact phrase memory first (one correction is always enough), then
+  // token generalization. Category/scope/source apply after a SINGLE
+  // correction (a shared distinctive word is enough — "remember it"),
+  // while type/visibility want corroboration since they're more structural
+  // and privacy shouldn't flip from one stray match.
+  const MIN_SCORE = { type: 2, category: 1, scope: 1, visibility: 2, source: 1 };
   for (const field of ['type', 'category', 'scope', 'visibility', 'source']) {
     const ex = exactGuess(field, raw);
-    const lg = ex ? null : learnedGuess(field, toks, 2);
+    const lg = ex ? null : learnedGuess(field, toks, MIN_SCORE[field]);
     const v = ex || (lg && lg.value);
     if (v) {
       if (field === 'type') type = v;

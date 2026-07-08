@@ -420,13 +420,24 @@ select {
 .subadd { margin-top: 6px; }
 .subadd input { padding: 10px 12px; font-size: 14px; }
 .subadd .chip { background: var(--card); box-shadow: 0 3px 0 var(--line); }
-.dimrows { display: flex; flex-direction: column; gap: 7px; margin-top: 4px; }
+.catchips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 2px; }
+.catchip { cursor: pointer; border: 1.5px solid transparent; }
+.catchip.on { background: var(--coral); color: #fff; }
+
+.dimrows { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
 .dimrow {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  display: flex; align-items: center; gap: 10px;
   background: var(--card);
-  border-radius: 14px; padding: 11px 14px; text-align: left; font-weight: 600;
+  border-radius: 14px; padding: 13px 14px; text-align: left; font-weight: 600;
+  box-shadow: 0 3px 0 var(--line);
 }
+.dimrow:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--line); }
+.dimrow > span:first-child { flex: 1; }
 .dimrow b { color: var(--coral-deep); font-weight: 700; }
+.resize-cue {
+  flex: none; background: var(--coral); color: #fff;
+  border-radius: 999px; padding: 5px 12px; font-size: 12px; font-weight: 700;
+}
 .sheet-actions { display: flex; gap: 10px; margin-top: 18px; }
 .sheet-actions .primary { flex: 1; }
 .sheet-actions .danger { padding: 12px 16px; font-weight: 700; }
