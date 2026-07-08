@@ -67,7 +67,7 @@ function init() {
 
   refreshProfileChip();
   refreshBadge();
-  goto('dump');
+  goto('lists'); // the app opens to your ranked list
   renderTakeover(); // if anything is surfacing, it floats before everything else
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {

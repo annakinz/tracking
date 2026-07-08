@@ -48,10 +48,18 @@ Dimensions (extensible):
 - **restock** — how urgently a supply needs replenishing
 
 ### 3. Live — lists that organize themselves
-- Filter by person (Anna / Ebbe / each kid / House), by visibility (shared / private), by category, by status.
-- Sort by any magnitude dimension, due date, or recency.
-- **Deadline gravity**: items with a due date self-inflate as the date nears. Effective priority = sized priority + gravity boost (0 beyond 14 days, ramping to +3 strata when due/overdue). Gravity is visual (item swells, flame indicator) and affects sorting — an approaching dentist appointment climbs into "on fire" without anyone touching it.
-- Tap an item → detail sheet: correct category/type/scope/visibility, set due date, resize any dimension, mark done, delete. Every correction teaches the agent.
+The app opens here. Two modes via a segmented toggle:
+- **Priority (default)**: one **flat, global ranked list** across every category. Priority is what you actually do with your time — a work thing and a home thing compete for the same hours, so they belong in one ranking, not siloed. Each row keeps its category color, so the ranked list is still a legible mix.
+- **Categories**: grouped by category, ranked within each (for when you want to work a single area).
+
+The sort dropdown chooses the dimension in either mode (default priority); filter by person, visibility, status.
+
+**Row interaction model** (the row is the primary surface):
+- **Tap the row body → resize** it on the dimension the list is currently ranked by. Re-sizing is the most common act, so it's the default tap.
+- **Tap a chip (category, who, due, source, loop, visibility) → a quick-edit popover** for just that field: pick a value inline, or hit "✎ edit all…" to jump to the full sheet. Categories you've used appear as one-tap options.
+- **Tap the progress ring (◉ 2/5) → the bubble interior** (the item's steps as bubbles).
+- **✓** finishes the item; **✎** (coral pencil, far right) opens the full edit sheet — correct anything, resize any dimension, notes/photos/steps, delete. Every correction teaches the agent.
+- **Deadline gravity**: items with a due date self-inflate as the date nears. Effective priority = sized priority + gravity boost (0 beyond 14 days, ramping to +3 strata when due/overdue). Gravity is visual (item swells, flame indicator) and affects the ranking — an approaching dentist appointment climbs to the top without anyone touching it.
 - **Surfacing, never nagging**: surfacing is an interruption of the app's own flow, not a labeled list section. When something needs your eyes, **it floats before anything else**: opening the app lands you on a full-screen **takeover** — the surfaced items as gently drifting bubbles, sized by urgency with the reason attached, on a hot ember-orange field (saturated warm orange is the arousal/energy end of the palette — motivating without red's alarm connotations, and the only place the color appears, so it never dilutes). Tapping a bubble opens that item to act on; getting to the rest of the app is the explicit, secondary path ("everything else ↓"). Inside the app, the Lists tab keeps an ember signal and surfaced items sit above all grouping. What surfaces: (a) items inside the deadline/loop gravity window, and (b) **stale high-dread items** — sized dread ≥ stratum 5 and untouched a week+ (dread is the signal for *why something isn't getting done*). Nothing ever pushes outside the app, and there are no red badges or guilt mechanics.
 - **Done** items are archived, not deleted — the archive is training data.
 

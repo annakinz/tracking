@@ -199,6 +199,50 @@ select {
   border: 2px solid rgba(35, 38, 46, .16); color: #5B5F6B; font-size: 14px;
   background: rgba(255, 255, 255, .6);
 }
+.row { cursor: pointer; }
+.row-icon {
+  flex: none; width: 32px; height: 32px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  border: 1.5px solid rgba(35, 38, 46, .18); color: #4A4E58; font-size: 14px; font-weight: 700;
+  background: rgba(255, 255, 255, .7);
+}
+.row-icon.edit { color: var(--coral-deep); }
+.row-icon:active { transform: translateY(1px); }
+.rchip {
+  display: inline-block; background: rgba(255, 255, 255, .82); border: none;
+  border-radius: 999px; padding: 3px 10px; font-size: 11px; font-weight: 600;
+  color: #4A4E58; margin: 3px 4px 0 0; cursor: pointer;
+}
+.rchip.hot { background: var(--coral); color: #fff; }
+.minichip.unsized { background: rgba(35,38,46,.12); }
+
+/* segmented Priority / Categories toggle */
+.segmented {
+  display: inline-flex; gap: 3px; padding: 3px; margin: 2px 0 4px;
+  background: #EEEEE6; border-radius: 999px;
+}
+.seg {
+  border-radius: 999px; padding: 7px 15px; font-size: 13px; font-weight: 700;
+  color: var(--muted);
+}
+.seg.on { background: var(--card); color: var(--ink); box-shadow: 0 1px 0 rgba(0,0,0,.08); }
+
+/* quick-edit popover */
+#quickWrap { position: fixed; inset: 0; z-index: 44; }
+#quickShade { position: absolute; inset: 0; }
+#quickPop {
+  position: fixed; background: var(--card); border-radius: 16px;
+  padding: 12px; box-shadow: 0 10px 34px rgba(35,38,46,.28), 0 3px 0 var(--line);
+  animation: pop .16s ease-out;
+}
+.qe-head { font-family: var(--display); font-weight: 640; font-size: 15px; margin-bottom: 9px; }
+.qe-opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.qe-opt { cursor: pointer; }
+.qe-opt.on { background: var(--coral); color: #fff; }
+.qe-editall {
+  display: block; width: 100%; margin-top: 11px; padding: 9px;
+  border-radius: 12px; background: var(--ink); color: #fff; font-weight: 700; font-size: 13px;
+}
 
 /* ---------- house ---------- */
 .quickadd { display: flex; gap: 8px; margin-top: 14px; }

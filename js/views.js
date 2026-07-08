@@ -15,6 +15,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
 
 let personFilterVal = 'all';
 let wellbeingOpen = false;
+let groupMode = false; // false = flat ranked list; true = grouped by category
 // the filed-results cards on the Dump screen are a live view of the last
 // dump; kept here so edits (which mutate the items in place) can re-render
 // them instead of leaving a stale snapshot.
@@ -232,6 +233,13 @@ function kidsChip(i) {
 // ---------- LISTS ----------
 
 export function renderLists() {
+  // Priority (flat) vs Categories (grouped) — priority is what you do with
+  // your time, across every category, so it's the default.
+  document.querySelectorAll('#listMode .seg').forEach(b => {
+    b.classList.toggle('on', (b.dataset.mode === 'cat') === groupMode);
+    b.onclick = () => { groupMode = b.dataset.mode === 'cat'; renderLists(); };
+  });
+
   const bar = $('#personFilter');
   bar.innerHTML = '';
   const opts = [{ id: 'all', name: 'All' }, ...state.family];
@@ -316,16 +324,21 @@ export function renderLists() {
     }
   }
 
-  // group by category
-  const groups = {};
-  for (const i of active) (groups[i.category] || (groups[i.category] = [])).push(i);
-  for (const [cat, arr] of Object.entries(groups)) {
-    const h = document.createElement('div');
-    h.className = 'group-head';
-    h.textContent = cat;
-    h.style.color = catSwatch(cat).deep;
-    body.appendChild(h);
-    for (const i of arr) body.appendChild(itemRow(i, sort));
+  if (groupMode) {
+    // Categories mode: grouped by category, ranked within each
+    const groups = {};
+    for (const i of active) (groups[i.category] || (groups[i.category] = [])).push(i);
+    for (const [cat, arr] of Object.entries(groups)) {
+      const h = document.createElement('div');
+      h.className = 'group-head';
+      h.textContent = cat;
+      h.style.color = catSwatch(cat).deep;
+      body.appendChild(h);
+      for (const i of arr) body.appendChild(itemRow(i, sort));
+    }
+  } else {
+    // Priority mode: one flat ranked list across every category
+    for (const i of active) body.appendChild(itemRow(i, sort));
   }
 
   if (showDone && done.length) {
@@ -345,41 +358,132 @@ function sorter(sort) {
   return (a, b) => (uOf(b, sort) ?? -1) - (uOf(a, sort) ?? -1);
 }
 
+// A row: tap the body to resize (bubble), tap a chip to edit that field
+// inline, tap the progress ring to open its steps, ✓ to finish, ✎ for the
+// full edit sheet.
 function itemRow(i, sort, opts = {}) {
-  const el = document.createElement('button');
+  const el = document.createElement('div');
   el.className = 'row' + (i.status === 'done' ? ' done' : '');
   const sw = catSwatch(i.category);
   el.style.background = sw.bg;
   el.style.boxShadow = '0 4px 0 ' + sw.dot + '66';
-  const dimForDot = ['priority', 'effort', 'difficulty', 'dread', 'restock'].includes(sort) ? sort : 'priority';
-  const u = dimForDot === 'priority' ? effectivePriority(i) : (uOf(i, dimForDot) ?? null);
-  const n = state.dims[dimForDot].strata.length;
+  const resizeDim = ['priority', 'effort', 'difficulty', 'dread', 'restock'].includes(sort) ? sort : 'priority';
+  const u = resizeDim === 'priority' ? effectivePriority(i) : (uOf(i, resizeDim) ?? null);
+  const n = state.dims[resizeDim].strata.length;
   const dot = u === null ? 10 : 10 + (u / n) * 26;
   const boost = gravityBoost(i);
+  const kids = childrenOf(i.id);
+
   el.innerHTML =
     '<span class="dot" style="width:' + dot + 'px;height:' + dot + 'px;' +
       'background:radial-gradient(circle at 32% 30%, #ffffffb3, ' + sw.dot + ')"></span>' +
     '<span class="row-main"><span class="row-title">' + esc(i.title) + '</span>' +
     '<span class="row-chips">' +
-      (i.scope !== state.profile ? chip(esc(memberName(i.scope))) : '') +
-      (i.due && !opts.noDue ? chip((boost >= 1.5 ? '⚑ ' : boost > 0 ? '◷ ' : 'due ') + i.due) : '') +
-      (i.source ? chip('@ ' + esc(i.source)) : '') +
-      (i.loop?.every && !opts.noDue ? chip('↺ ~' + i.loop.every + 'd') : '') +
-      (kidsChip(i)) +
-      (i.notes || (i.media || []).length ? chip('✎') : '') +
-      (i.visibility === 'private' ? chip('private') : '') +
-      (i.status === 'inbox' ? chip('unsized') : '') +
+      rchip('category', esc(i.category)) +
+      (i.scope !== state.profile ? rchip('scope', esc(memberName(i.scope))) : '') +
+      (i.due && !opts.noDue ? rchip('due', (boost >= 1.5 ? '⚑ ' : boost > 0 ? '◷ ' : 'due ') + i.due, boost > 0 ? 'hot' : '') : '') +
+      (i.source ? rchip('source', '@ ' + esc(i.source)) : '') +
+      (i.loop?.every && !opts.noDue ? rchip('loop', '↺ ~' + i.loop.every + 'd') : '') +
+      (kids.length ? '<button class="rchip" data-steps>◉ ' + kids.filter(k => k.status === 'done').length + '/' + kids.length + '</button>' : '') +
+      rchip('visibility', i.visibility === 'private' ? 'private' : 'shared') +
+      (i.status === 'inbox' ? '<span class="minichip unsized">unsized</span>' : '') +
     '</span></span>' +
-    '<span class="row-check" data-check>' + (i.status === 'done' ? '↺' : '✓') + '</span>';
+    '<button class="row-icon" data-done title="done">' + (i.status === 'done' ? '↺' : '✓') + '</button>' +
+    '<button class="row-icon edit" data-edit title="edit all">✎</button>';
+
   el.onclick = (e) => {
-    if (e.target.closest('[data-check]')) {
-      markDone(i.id, i.status !== 'done');
-      changed();
-    } else {
-      openItem(i.id);
-    }
+    if (e.target.closest('[data-done]')) { markDone(i.id, i.status !== 'done'); changed(); return; }
+    if (e.target.closest('[data-edit]')) { openSheet(i.id); return; }
+    if (e.target.closest('[data-steps]')) { openBubble(i.id); return; }
+    const chipBtn = e.target.closest('.rchip[data-field]');
+    if (chipBtn) { openQuickEdit(i.id, chipBtn.dataset.field, chipBtn); return; }
+    // body tap → resize on the dimension the list is ranked by
+    window.stratosGoto('size');
+    openSizer([getItem(i.id)], () => window.stratosGoto('lists'), resizeDim);
   };
   return el;
+}
+
+const rchip = (field, text, cls) =>
+  '<button class="rchip ' + (cls || '') + '" data-field="' + field + '">' + text + '</button>';
+
+// ---------- QUICK-EDIT POPOVER ----------
+
+function isoIn(days) { const d = new Date(); d.setDate(d.getDate() + days); return d.toISOString().slice(0, 10); }
+function isoWeekend() { const dow = new Date().getDay(); return isoIn(((6 - dow) + 7) % 7 || 7); }
+
+function openQuickEdit(id, field, anchor) {
+  const i = getItem(id);
+  if (!i) return;
+  const wrap = $('#quickWrap'), pop = $('#quickPop');
+  let title = field, options = [];
+
+  if (field === 'category') {
+    title = 'Category';
+    const cats = [...new Set(state.items.map(x => x.category))];
+    options = cats.map(c => ({ label: c, on: c === i.category, apply: { category: c } }));
+  } else if (field === 'visibility') {
+    title = 'Visibility';
+    options = [
+      { label: 'Shared with Ebbe & me', on: i.visibility !== 'private', apply: { visibility: 'shared' } },
+      { label: 'Private — only me', on: i.visibility === 'private', apply: { visibility: 'private' } },
+    ];
+  } else if (field === 'scope') {
+    title = 'Who / where';
+    options = state.family.map(f => ({ label: f.name, on: f.id === i.scope, apply: { scope: f.id } }));
+  } else if (field === 'due') {
+    title = 'Due';
+    options = [
+      { label: 'Today', apply: { due: isoIn(0) } },
+      { label: 'Tomorrow', apply: { due: isoIn(1) } },
+      { label: 'This weekend', apply: { due: isoWeekend() } },
+      { label: 'In a week', apply: { due: isoIn(7) } },
+      { label: 'Clear date', on: !i.due, apply: { due: null } },
+    ];
+  } else if (field === 'source') {
+    title = 'Where from';
+    const srcs = [...new Set(state.items.map(x => x.source).filter(Boolean))];
+    options = srcs.map(s => ({ label: s, on: s === i.source, apply: { source: s } }));
+    options.push({ label: 'Clear', on: !i.source, apply: { source: null } });
+  } else if (field === 'loop') {
+    title = 'Loop';
+    const hist = i.loop?.history || [];
+    options = [
+      { label: 'Not a loop', on: !i.loop, apply: { loop: null } },
+      { label: 'every ~7 days', apply: { loop: { every: 7, auto: false, history: hist } } },
+      { label: 'every ~14 days', apply: { loop: { every: 14, auto: false, history: hist } } },
+      { label: 'every ~30 days', apply: { loop: { every: 30, auto: false, history: hist } } },
+    ];
+  }
+
+  pop.innerHTML =
+    '<div class="qe-head">' + esc(title) + '</div>' +
+    '<div class="qe-opts">' +
+      options.map((o, idx) => '<button class="chip qe-opt' + (o.on ? ' on' : '') + '" data-i="' + idx + '">' + esc(o.label) + '</button>').join('') +
+    '</div>' +
+    '<button class="qe-editall" data-editall>✎ edit all…</button>';
+
+  wrap.hidden = false;
+  positionPop(pop, anchor);
+
+  pop.querySelectorAll('.qe-opt').forEach(btn => {
+    btn.onclick = () => { updateItem(id, options[+btn.dataset.i].apply); wrap.hidden = true; changed(); };
+  });
+  pop.querySelector('[data-editall]').onclick = () => { wrap.hidden = true; openSheet(id); };
+  $('#quickShade').onclick = () => { wrap.hidden = true; };
+}
+
+function positionPop(pop, anchor) {
+  const pw = Math.min(300, window.innerWidth - 16);
+  pop.style.width = pw + 'px';
+  pop.style.left = '0px'; pop.style.top = '0px';
+  const a = anchor.getBoundingClientRect();
+  const ph = pop.offsetHeight;
+  const left = Math.min(Math.max(8, a.left), window.innerWidth - pw - 8);
+  let top = a.bottom + 6;
+  if (top + ph > window.innerHeight - 74) top = Math.max(8, a.top - ph - 6);
+  pop.style.left = left + 'px';
+  pop.style.top = top + 'px';
 }
 
 // ---------- HOUSE ----------

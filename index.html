@@ -63,6 +63,10 @@
 
   <!-- ============ LISTS ============ -->
   <section id="view-lists" class="view">
+    <div class="segmented" id="listMode">
+      <button data-mode="flat" class="seg on">⬍ Priority</button>
+      <button data-mode="cat" class="seg">⊞ Categories</button>
+    </div>
     <div class="filterbar" id="personFilter"></div>
     <div class="filterbar small">
       <select id="sortSel">
@@ -112,6 +116,12 @@
 <div id="sheetWrap" hidden>
   <div id="sheetShade"></div>
   <div id="sheet"></div>
+</div>
+
+<!-- quick-edit popover: tap a chip on a list row to change that field inline -->
+<div id="quickWrap" hidden>
+  <div id="quickShade"></div>
+  <div id="quickPop"></div>
 </div>
 
 <!-- bubble interior: an item with steps is a bubble containing bubbles -->
