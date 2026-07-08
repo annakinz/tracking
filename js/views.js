@@ -15,6 +15,11 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
 
 let personFilterVal = 'all';
 let wellbeingOpen = false;
+// the filed-results cards on the Dump screen are a live view of the last
+// dump; kept here so edits (which mutate the items in place) can re-render
+// them instead of leaving a stale snapshot.
+let lastFiled = [];
+let lastFiledViaAgent = false;
 
 // The Sorbet law: every category owns a tint. Whole card washed in the
 // pale tone, saturated dot, deep tone for its heading. Known categories
@@ -171,6 +176,8 @@ export function initDump() {
 }
 
 function renderDumpResults(items, viaAgent) {
+  lastFiled = items;
+  lastFiledViaAgent = viaAgent;
   const box = $('#dumpResults');
   const via = viaAgent ? '✦ filed by Gemini'
     : getKey() ? 'filed by built-in rules (Gemini unreachable)'
@@ -179,6 +186,16 @@ function renderDumpResults(items, viaAgent) {
     (items.length === 1 ? ' item' : ' items') + ' <span style="opacity:.7">(' + via + ')</span>' +
     ' — tap to correct me. Then head to <b>Size</b>.</div>';
   for (const it of items) box.appendChild(itemCard(it));
+}
+
+// Re-render the Dump screen's filed cards from current state, dropping any
+// that were deleted. Called on every change so an edit made in the detail
+// sheet is reflected immediately instead of leaving a stale card.
+export function refreshDumpResults() {
+  if (!lastFiled.length) return;
+  const live = lastFiled.map(it => getItem(it.id)).filter(Boolean);
+  if (!live.length) { $('#dumpResults').innerHTML = ''; lastFiled = []; return; }
+  renderDumpResults(live, lastFiledViaAgent);
 }
 
 function itemCard(it) {

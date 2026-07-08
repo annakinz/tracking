@@ -2,7 +2,7 @@
 
 import { state, save, inboxItems, memberName, tickLoops } from './store.js';
 import { initSizer, openSizer } from './bubbles.js';
-import { initDump, initHouse, renderLists, renderHouse, renderSettings, renderTakeover, allSurfaced } from './views.js';
+import { initDump, initHouse, renderLists, renderHouse, renderSettings, renderTakeover, refreshDumpResults, allSurfaced } from './views.js';
 
 const $ = (s) => document.querySelector(s);
 let current = 'dump';
@@ -48,6 +48,7 @@ function init() {
 
   document.addEventListener('stratos:changed', () => {
     refreshBadge();
+    if (current === 'dump') refreshDumpResults();
     if (current === 'lists') renderLists();
     if (current === 'house') renderHouse();
   });
