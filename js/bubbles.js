@@ -159,16 +159,12 @@ function uniBubble(nd) {
   b.style.left = (nd.x - nd.r) + 'px';
   b.style.top = (nd.y - nd.r) + 'px';
   b.style.background = 'radial-gradient(circle at 34% 30%, #ffffff, ' + sw + 'cc 72%, ' + sw + ')';
-  // text scales with the bubble and drops out on the small ones (tap to peek)
+  // text scales with the bubble, all the way down to tiny on the small ones
   b.innerHTML = '<span></span>';
-  if (size >= 80) {
-    b.style.fontSize = (size / 6.8) + 'px';
-    const span = b.querySelector('span');
-    span.style.webkitLineClamp = size >= 120 ? '3' : '2';
-    span.textContent = it.title;
-  } else {
-    b.style.fontSize = '0px';
-  }
+  const span = b.querySelector('span');
+  span.style.webkitLineClamp = size >= 122 ? '3' : size >= 90 ? '2' : '1';
+  b.style.fontSize = Math.max(5, size / 6.6) + 'px';
+  span.textContent = it.title;
 
   // gentle, individual drift — small enough not to re-close the gaps
   const rnd = (a, c) => a + Math.random() * (c - a);
@@ -221,14 +217,39 @@ function nudgeNode(nd, dx, dy) {
 }
 
 // tap: a little card showing the whole title + a couple of actions
+function dimStratum(it, dimId) {
+  const uu = uOf(it, dimId);
+  if (uu === null) return null;
+  const idx = Math.floor(uu);
+  const s = state.dims[dimId].strata[idx];
+  return s ? (idx + 1) + ' · ' + s.label : null;
+}
+
 function peekBubble(nd) {
   selectedNode = nd;
   const it = nd.it, card = els.peekCard;
-  const meta = [it.category, memberName(it.scope), it.due ? 'due ' + it.due : '']
-    .filter(Boolean).join(' · ');
+
+  const pri = dimStratum(it, 'priority');
+  const chips = [];
+  chips.push(['priority', pri || 'unsized', pri ? 'hot' : 'dim']);
+  chips.push(['', it.visibility === 'private' ? 'private' : 'shared', '']);
+  chips.push(['', it.category, '']);
+  if (it.scope !== state.profile) chips.push(['', memberName(it.scope), '']);
+  if (it.due) chips.push(['', 'due ' + it.due, '']);
+  if (it.source) chips.push(['', '@ ' + it.source, '']);
+  if (it.loop?.every) chips.push(['', '↺ ~' + it.loop.every + 'd', '']);
+  for (const d of ['effort', 'difficulty', 'dread', 'restock']) {
+    const l = dimStratum(it, d);
+    if (l) chips.push([state.dims[d].label.toLowerCase(), l, '']);
+  }
+
+  const chipHtml = chips.map(([k, v, cls]) =>
+    '<span class="peek-chip ' + cls + '">' + (k ? '<b>' + esc(k) + '</b> ' : '') + esc(v) + '</span>'
+  ).join('');
+
   card.innerHTML =
     '<div class="peek-title">' + esc(it.title) + '</div>' +
-    '<div class="peek-meta">' + esc(meta) + '</div>' +
+    '<div class="peek-chips">' + chipHtml + '</div>' +
     '<div class="peek-actions"><button data-resize>◯ resize</button>' +
     '<button data-edit>✎ edit</button></div>';
   els.peekWrap.hidden = false;

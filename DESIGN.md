@@ -24,7 +24,7 @@ The product is the strict separation of three mental modes. Never mix them.
 The Size tab opens the **universe**: every active item at once, as a bubble whose **size and height are set by its priority** — the biggest, most urgent things crowd the top ("on fire ↑"), tapering down to small "someday" bubbles at the bottom, each in its category color, over a warm-to-cool sky. Unsized items wait in a tray at the very bottom. It's the surfacing idea made total — you *see* the whole shape of your obligations at a glance.
 
 Bubbles gently drift (each its own speed/phase) and a relaxation pass keeps them from overlapping — so it stays legible. Three gestures on a bubble:
-- **Tap → peek**: a little card with the item's full title + meta and quick **resize / edit** actions. (So small bubbles need no text; tap reveals them.)
+- **Tap → peek**: a little card with the item's full title and its **priority stratum, visibility, category, who, due, source, loop, and any other sized magnitudes** as chips, plus quick **resize / edit** actions. (Bubbles also carry their title in text that scales all the way down to tiny on the small ones; the peek is the reliable full read.)
 - **Two-finger pinch → size**: pinch a bubble and you drop straight into the stratosphere sizer *already resizing* — the universe stays mounted underneath so the same pinch keeps driving the size while the sizer fades in over it (no "resize" tap). Release to commit to the sizer.
 - **Long-press → edit**: straight to the full edit sheet.
 - **Flick → nudge**: shove a bubble aside; the others settle around it.
