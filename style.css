@@ -279,10 +279,19 @@ select {
 #skipBtn:active { transform: translateY(2px); box-shadow: 0 2px 0 rgba(0,0,0,.12); }
 #sizeHint { font-size: 11px; color: var(--stagefg); opacity: .7; }
 
-.jump-up #peerLayer { animation: jumpUp .38s ease-out; }
-.jump-down #peerLayer { animation: jumpDown .38s ease-out; }
-@keyframes jumpUp { from { transform: scale(1.7); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-@keyframes jumpDown { from { transform: scale(.55); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+/* on cross-up, the bigger peers of the new band rush up into place (you rose
+   past the little ones); on cross-down they fall back in from above */
+.jump-up #peerLayer { animation: jumpUp .42s cubic-bezier(.2,.8,.25,1); }
+.jump-down #peerLayer { animation: jumpDown .42s cubic-bezier(.2,.8,.25,1); }
+@keyframes jumpUp { from { transform: translateY(90px) scale(.7); opacity: 0; } to { transform: translateY(0) scale(1); opacity: 1; } }
+@keyframes jumpDown { from { transform: translateY(-90px) scale(1.25); opacity: 0; } to { transform: translateY(0) scale(1); opacity: 1; } }
+/* the hero gives a quick springy pulse each time it breaks through a band */
+#theBubble.pop-jump { animation: bubblePop .34s ease-out; }
+@keyframes bubblePop {
+  0%   { transform: translate(-50%, -50%) scale(1); }
+  38%  { transform: translate(-50%, -50%) scale(1.09); }
+  100% { transform: translate(-50%, -50%) scale(1); }
+}
 
 /* ---------- surfacing takeover ---------- */
 #takeover {

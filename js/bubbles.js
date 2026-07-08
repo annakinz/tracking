@@ -146,8 +146,8 @@ function render() {
   const idx = Math.floor(u);
   const frac = u - idx;
 
-  const w = MIN_W + (MAX_W - MIN_W) * frac;
-  els.bubble.style.width = els.bubble.style.height = w + 'px';
+  const d = diam(u);
+  els.bubble.style.width = els.bubble.style.height = d + 'px';
 
   els.num.textContent = (idx + 1);
   els.name.textContent = strata[idx].label;
@@ -170,11 +170,25 @@ function render() {
     renderPeers(idx);
     if (dir !== 0) {
       els.stage.classList.remove('jump-up', 'jump-down');
+      els.bubble.classList.remove('pop-jump');
       void els.stage.offsetWidth; // restart animation
       els.stage.classList.add(dir > 0 ? 'jump-up' : 'jump-down');
-      if (navigator.vibrate) navigator.vibrate(12);
+      els.bubble.classList.add('pop-jump');
+      if (navigator.vibrate) navigator.vibrate(dir > 0 ? 16 : 10);
     }
   }
+}
+
+// Absolute size: one exponential curve from a small seed to bigger than the
+// stage, spanning the whole range of strata. Growing never resets — crossing
+// a band just brings bigger peers into view, so the hero feels like it flew
+// up past the little ones and, at the top, bursts past the screen edges.
+function diam(mag) {
+  const n = state.dims[dim].strata.length;
+  const w = els.stage.clientWidth || 360;
+  const Dmin = 92, Dmax = w * 1.2;      // Dmax > stage width → pushes past L/R edges
+  const p = Math.max(0, Math.min(1, mag / n));
+  return Dmin * Math.pow(Dmax / Dmin, p);
 }
 
 function renderPeers(idx) {
@@ -182,7 +196,9 @@ function renderPeers(idx) {
   const peers = peersOf(idx);
   peers.forEach((p, i) => {
     const f = p.dims[dim].f ?? 0.5;
-    const w = (MIN_W + (MAX_W - MIN_W) * f) * 0.72; // peers slightly recessed
+    // peers sized on the same absolute curve, so comparisons are honest and
+    // the hero shrinks *relative* to a higher band without ever resetting
+    const w = diam(idx + f) * 0.82;
     const el = document.createElement('div');
     el.className = 'peer';
     el.style.width = el.style.height = w + 'px';
