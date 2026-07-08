@@ -35,6 +35,8 @@ let lastStratum = -1;
 let onFinish = null;
 let uniNodes = [];       // current universe layout {it,size,r,x,y,targetY,el,isUnsized}
 let uniW = 0, uniH = 0;
+let selectedNode = null; // last peeked/pinched bubble
+let pinching = false;    // a two-finger launch is in progress
 
 export function initSizer() {
   els = {
@@ -58,6 +60,8 @@ export function initSizer() {
     peekShade: document.getElementById('peekShade'),
   };
   bindGestures();
+  bindPinchLaunch(els.universe);   // pinch a bubble in the sky → straight into sizing
+  bindPinchLaunch(els.peekWrap);   // …or pinch while its peek card is open
   els.ok.addEventListener('click', commit);
   els.skip.addEventListener('click', skip);
   els.allBtn.addEventListener('click', openUniverse);
@@ -187,7 +191,7 @@ function attachUniGestures(b, nd) {
     sx = e.clientX; sy = e.clientY; moved = false; longFired = false;
     try { b.setPointerCapture(e.pointerId); } catch (err) { /* ok */ }
     lpTimer = setTimeout(() => {
-      if (!moved) { longFired = true; if (navigator.vibrate) navigator.vibrate(18); editItem(nd.it.id); }
+      if (!moved && !pinching) { longFired = true; if (navigator.vibrate) navigator.vibrate(18); editItem(nd.it.id); }
     }, 480);
   });
   b.addEventListener('pointermove', (e) => {
@@ -195,7 +199,7 @@ function attachUniGestures(b, nd) {
   });
   b.addEventListener('pointerup', (e) => {
     clearTimeout(lpTimer);
-    if (longFired) return;
+    if (longFired || pinching) return;  // a two-finger pinch took over — not a tap
     const dx = e.clientX - sx, dy = e.clientY - sy;
     if (Math.hypot(dx, dy) > 26) nudgeNode(nd, dx, dy);   // flick
     else peekBubble(nd);                                   // tap
@@ -218,6 +222,7 @@ function nudgeNode(nd, dx, dy) {
 
 // tap: a little card showing the whole title + a couple of actions
 function peekBubble(nd) {
+  selectedNode = nd;
   const it = nd.it, card = els.peekCard;
   const meta = [it.category, memberName(it.scope), it.due ? 'due ' + it.due : '']
     .filter(Boolean).join(' · ');
@@ -262,6 +267,68 @@ function sizeOne(id) {
   openSizer([getItem(id)], openUniverse, 'priority');
 }
 
+// Pinch-to-size: a two-finger pinch on a selected bubble drops you straight
+// into the stratosphere UI already resizing — no "resize" tap. The universe
+// (or peek) layer stays mounted underneath so the *same* pinch keeps driving
+// the size while the sizer fades in over it; on release we commit to the sizer.
+function enterSizerForPinch(node) {
+  selectedNode = node;
+  els.peekCard.style.display = 'none';        // if launched from the peek, drop its card
+  els.allBtn.hidden = false;
+  queue = [getItem(node.it.id)];
+  onFinish = () => openUniverse();
+  nextItem('priority');                        // shows the stage; universe stays under it
+  els.stage.classList.remove('pinch-in');
+  void els.stage.offsetWidth;
+  els.stage.classList.add('pinch-in');
+}
+
+function nodeAtClient(cx, cy) {
+  const rect = els.uniField.getBoundingClientRect();
+  const px = cx - rect.left, py = cy - rect.top;
+  let best = null, bestD = Infinity;
+  for (const nd of uniNodes) {
+    const d = Math.hypot(px - nd.x, py - nd.y);
+    if (d <= nd.r + 24 && d < bestD) { best = nd; bestD = d; }
+  }
+  return best;
+}
+
+function pinchTarget(touches) {
+  const cx = (touches[0].clientX + touches[1].clientX) / 2;
+  const cy = (touches[0].clientY + touches[1].clientY) / 2;
+  return nodeAtClient(cx, cy) || selectedNode;
+}
+
+function bindPinchLaunch(el) {
+  let d0 = 0, on = false;
+  el.addEventListener('touchstart', (e) => {
+    if (e.touches.length !== 2) return;
+    const t = pinchTarget(e.touches);
+    if (!t) return;
+    e.preventDefault();
+    on = true; pinching = true; d0 = dist(e.touches);
+    enterSizerForPinch(t);
+  }, { passive: false });
+  el.addEventListener('touchmove', (e) => {
+    if (!on || e.touches.length !== 2) return;
+    e.preventDefault();
+    const d = dist(e.touches);
+    if (d0 > 0) { u += Math.log2(d / d0) * 1.6; render(); }
+    d0 = d;
+  }, { passive: false });
+  const end = (e) => {
+    if (!on || e.touches.length >= 2) return;
+    on = false; d0 = 0;
+    els.universe.hidden = true;                // now fully commit to the sizer
+    els.peekWrap.hidden = true;
+    els.peekCard.style.display = '';
+    setTimeout(() => { pinching = false; }, 300);
+  };
+  el.addEventListener('touchend', end);
+  el.addEventListener('touchcancel', end);
+}
+
 // Open the sizer for a queue of items. done() runs when the queue empties
 // after sizing — but NOT when it opens already empty (that would bounce you
 // straight back out, which reads as "nothing happens"). An empty open just
@@ -288,7 +355,6 @@ function nextItem(forcedDim) {
   item = queue.shift();
   if (!item) return showEmpty();
   els.empty.hidden = true;
-  els.universe.hidden = true;
   els.stage.hidden = false;
   els.allBtn.hidden = false;
   dim = forcedDim || defaultDimension(item);

@@ -25,6 +25,7 @@ The Size tab opens the **universe**: every active item at once, as a bubble whos
 
 Bubbles gently drift (each its own speed/phase) and a relaxation pass keeps them from overlapping — so it stays legible. Three gestures on a bubble:
 - **Tap → peek**: a little card with the item's full title + meta and quick **resize / edit** actions. (So small bubbles need no text; tap reveals them.)
+- **Two-finger pinch → size**: pinch a bubble and you drop straight into the stratosphere sizer *already resizing* — the universe stays mounted underneath so the same pinch keeps driving the size while the sizer fades in over it (no "resize" tap). Release to commit to the sizer.
 - **Long-press → edit**: straight to the full edit sheet.
 - **Flick → nudge**: shove a bubble aside; the others settle around it.
 
