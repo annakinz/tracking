@@ -3,8 +3,11 @@
 // the background shifts, peers swap to that stratum's residents, and the
 // bubble re-enters small (growing) or large (shrinking).
 
-import { state, setMagnitude, uOf, insertStratum, visibleTo, effectivePriority, getItem } from './store.js';
+import { state, setMagnitude, uOf, insertStratum, visibleTo, effectivePriority, getItem, memberName } from './store.js';
 import { defaultDimension } from './classify.js';
+
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 const MIN_W = 96, MAX_W = 250;   // bubble width across one stratum
 
@@ -30,6 +33,8 @@ let dim = 'priority';
 let u = 3.5;
 let lastStratum = -1;
 let onFinish = null;
+let uniNodes = [];       // current universe layout {it,size,r,x,y,targetY,el,isUnsized}
+let uniW = 0, uniH = 0;
 
 export function initSizer() {
   els = {
@@ -48,6 +53,9 @@ export function initSizer() {
     universe: document.getElementById('sizeUniverse'),
     uniField: document.getElementById('universeField'),
     allBtn: document.getElementById('allBtn'),
+    peekWrap: document.getElementById('peekWrap'),
+    peekCard: document.getElementById('peekCard'),
+    peekShade: document.getElementById('peekShade'),
   };
   bindGestures();
   els.ok.addEventListener('click', commit);
@@ -84,72 +92,156 @@ function renderUniverse() {
   const items = state.items.filter(i =>
     i.status !== 'done' && !i.parent && i.type !== 'issue' && visibleTo(i, state.profile));
 
-  const topPad = 44, botPad = 66;
-  const unsized = items.filter(it => uOf(it, 'priority') === null);
-  const sized = items.filter(it => uOf(it, 'priority') !== null);
+  const topPad = 44, botPad = 62;
+  uniW = W; uniH = H;
 
-  // group by priority band so same-priority bubbles spread across the width
-  // instead of stacking; height stays continuous within the band
-  const bands = {};
-  for (const it of sized) {
-    const u = effectivePriority(it);
-    const band = Math.max(0, Math.min(n - 1, Math.floor(u)));
-    (bands[band] || (bands[band] = [])).push({ it, u });
-  }
-  for (const band of Object.keys(bands)) {
-    const arr = bands[band].sort((a, b) => b.u - a.u);
-    const cols = arr.length;
-    arr.forEach((o, idx) => {
-      const size = uniDiam(o.u);
-      const frac = o.u / n;
-      const yCenter = (H - botPad) - frac * (H - topPad - botPad)
-        + ((idx % 2) ? 1 : -1) * size * 0.12; // tiny stagger so rows breathe
-      const y = Math.max(6, Math.min(H - size - 50, yCenter - size / 2));
-      const xc = (idx + 0.5) / cols * W;        // spread centers across width
-      const x = Math.max(6, Math.min(W - size - 6, xc - size / 2));
-      field.appendChild(uniBubble(o.it, size, x, y, false));
-    });
-  }
-
-  // unsized tray along the bottom
-  unsized.forEach((it, idx) => {
-    const size = 46;
-    const cols = Math.max(1, Math.floor(W / (size + 10)));
-    const x = ((idx % cols) + 0.5) * (W / cols) - size / 2;
-    const y = H - 46 - Math.floor(idx / cols) * (size + 8);
-    field.appendChild(uniBubble(it, size, x, y, true));
+  // Each item becomes a node with a *target* height set by its priority
+  // (unsized ones sink to the bottom). A relaxation pass then pushes
+  // overlapping bubbles apart so none obscures another — the app declutters.
+  uniNodes = items.map((it, i) => {
+    const up = uOf(it, 'priority');
+    const isUnsized = up === null;
+    const u = isUnsized ? 0 : effectivePriority(it);
+    const size = isUnsized ? 44 : uniDiam(u);
+    const r = size / 2;
+    const frac = isUnsized ? 0 : u / n;
+    const targetY = Math.max(r + topPad, Math.min(H - r - botPad,
+      (H - botPad) - frac * (H - topPad - botPad)));
+    const x = Math.max(r + 2, Math.min(W - r - 2, ((i * 0.618034) % 1) * (W - size) + r));
+    return { it, size, r, x, y: targetY, targetY, isUnsized, el: null };
   });
+
+  relaxUniverse(90);
+  for (const nd of uniNodes) { nd.el = uniBubble(nd); field.appendChild(nd.el); }
 }
 
-function uniBubble(it, size, x, y, isUnsized) {
+function relaxUniverse(iters) {
+  const W = uniW, H = uniH, PAD = 10, nodes = uniNodes;
+  for (let iter = 0; iter < iters; iter++) {
+    for (let a = 0; a < nodes.length; a++) {
+      for (let b = a + 1; b < nodes.length; b++) {
+        const A = nodes[a], B = nodes[b];
+        let dx = B.x - A.x, dy = B.y - A.y, d = Math.hypot(dx, dy) || 0.01;
+        const min = A.r + B.r + PAD;
+        if (d < min) {
+          const push = (min - d) / 2, ux = dx / d, uy = dy / d;
+          A.x -= ux * push; A.y -= uy * push;
+          B.x += ux * push; B.y += uy * push;
+        }
+      }
+    }
+    for (const nd of nodes) {
+      nd.y += (nd.targetY - nd.y) * 0.08;              // spring toward priority height
+      nd.x = Math.max(nd.r + 2, Math.min(W - nd.r - 2, nd.x));
+      nd.y = Math.max(nd.r + 6, Math.min(H - nd.r - 46, nd.y));
+    }
+  }
+}
+
+function layoutUniverse() {
+  for (const nd of uniNodes) {
+    if (!nd.el) continue;
+    nd.el.style.left = (nd.x - nd.r) + 'px';
+    nd.el.style.top = (nd.y - nd.r) + 'px';
+  }
+}
+
+function uniBubble(nd) {
+  const it = nd.it, size = nd.size;
   const sw = catColor(it.category);
-  const b = document.createElement('button');
-  b.className = 'uni-bubble' + (isUnsized ? ' unsized' : '');
+  const b = document.createElement('div');
+  b.className = 'uni-bubble' + (nd.isUnsized ? ' unsized' : '');
   b.style.width = b.style.height = size + 'px';
-  b.style.left = x + 'px';
-  b.style.top = y + 'px';
+  b.style.left = (nd.x - nd.r) + 'px';
+  b.style.top = (nd.y - nd.r) + 'px';
   b.style.background = 'radial-gradient(circle at 34% 30%, #ffffff, ' + sw + 'cc 72%, ' + sw + ')';
-  // text scales with the bubble and drops out entirely on the small ones
+  // text scales with the bubble and drops out on the small ones (tap to peek)
   b.innerHTML = '<span></span>';
-  if (size >= 62) {
+  if (size >= 80) {
     b.style.fontSize = (size / 6.8) + 'px';
-    b.querySelector('span').textContent = it.title;
+    const span = b.querySelector('span');
+    span.style.webkitLineClamp = size >= 120 ? '3' : '2';
+    span.textContent = it.title;
   } else {
     b.style.fontSize = '0px';
   }
 
-  // gentle, individual drift so the sky feels alive rather than frozen
+  // gentle, individual drift — small enough not to re-close the gaps
   const rnd = (a, c) => a + Math.random() * (c - a);
-  const amp = Math.min(16, size * 0.18);
+  const amp = Math.min(5, size * 0.05);
   b.style.setProperty('--dx', rnd(-amp, amp).toFixed(1) + 'px');
   b.style.setProperty('--dy', rnd(-amp, amp).toFixed(1) + 'px');
-  b.style.setProperty('--rot', rnd(-2.5, 2.5).toFixed(1) + 'deg');
-  const dur = rnd(7, 13);
+  b.style.setProperty('--rot', rnd(-1.5, 1.5).toFixed(1) + 'deg');
+  const dur = rnd(8, 14);
   b.style.animationDuration = dur.toFixed(1) + 's';
   b.style.animationDelay = (-rnd(0, dur)).toFixed(1) + 's';
 
-  b.onclick = () => sizeOne(it.id);
+  attachUniGestures(b, nd);
   return b;
+}
+
+// tap → peek the card · long-press → edit · flick → nudge the bubble aside
+function attachUniGestures(b, nd) {
+  let sx = 0, sy = 0, moved = false, longFired = false, lpTimer = null;
+  b.addEventListener('pointerdown', (e) => {
+    sx = e.clientX; sy = e.clientY; moved = false; longFired = false;
+    try { b.setPointerCapture(e.pointerId); } catch (err) { /* ok */ }
+    lpTimer = setTimeout(() => {
+      if (!moved) { longFired = true; if (navigator.vibrate) navigator.vibrate(18); editItem(nd.it.id); }
+    }, 480);
+  });
+  b.addEventListener('pointermove', (e) => {
+    if (!moved && Math.hypot(e.clientX - sx, e.clientY - sy) > 10) { moved = true; clearTimeout(lpTimer); }
+  });
+  b.addEventListener('pointerup', (e) => {
+    clearTimeout(lpTimer);
+    if (longFired) return;
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    if (Math.hypot(dx, dy) > 26) nudgeNode(nd, dx, dy);   // flick
+    else peekBubble(nd);                                   // tap
+  });
+  b.addEventListener('pointercancel', () => clearTimeout(lpTimer));
+}
+
+function editItem(id) { document.dispatchEvent(new CustomEvent('stratos:edit', { detail: id })); }
+
+// flick: shove the bubble in the flick direction and let the others settle
+function nudgeNode(nd, dx, dy) {
+  const m = Math.hypot(dx, dy) || 1;
+  const push = Math.min(90, nd.size * 0.9);
+  nd.x = Math.max(nd.r + 2, Math.min(uniW - nd.r - 2, nd.x + dx / m * push));
+  nd.y = Math.max(nd.r + 6, Math.min(uniH - nd.r - 46, nd.y + dy / m * push));
+  relaxUniverse(50);
+  layoutUniverse();
+  if (navigator.vibrate) navigator.vibrate(7);
+}
+
+// tap: a little card showing the whole title + a couple of actions
+function peekBubble(nd) {
+  const it = nd.it, card = els.peekCard;
+  const meta = [it.category, memberName(it.scope), it.due ? 'due ' + it.due : '']
+    .filter(Boolean).join(' · ');
+  card.innerHTML =
+    '<div class="peek-title">' + esc(it.title) + '</div>' +
+    '<div class="peek-meta">' + esc(meta) + '</div>' +
+    '<div class="peek-actions"><button data-resize>◯ resize</button>' +
+    '<button data-edit>✎ edit</button></div>';
+  els.peekWrap.hidden = false;
+  positionNear(card, nd.el);
+  card.querySelector('[data-resize]').onclick = () => { els.peekWrap.hidden = true; sizeOne(it.id); };
+  card.querySelector('[data-edit]').onclick = () => { els.peekWrap.hidden = true; editItem(it.id); };
+  els.peekShade.onclick = () => { els.peekWrap.hidden = true; };
+}
+
+function positionNear(card, anchor) {
+  const pw = Math.min(260, window.innerWidth - 16);
+  card.style.width = pw + 'px'; card.style.left = '0px'; card.style.top = '0px';
+  const a = anchor.getBoundingClientRect();
+  const ph = card.offsetHeight;
+  const left = Math.min(Math.max(8, a.left + a.width / 2 - pw / 2), window.innerWidth - pw - 8);
+  let top = a.bottom + 8;
+  if (top + ph > window.innerHeight - 74) top = Math.max(8, a.top - ph - 8);
+  card.style.left = left + 'px'; card.style.top = top + 'px';
 }
 
 // category tint for a universe bubble (kept in sync with views catSwatch dots)

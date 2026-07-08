@@ -23,9 +23,12 @@ The product is the strict separation of three mental modes. Never mix them.
 ### 2. Size — the bubble universe
 The Size tab opens the **universe**: every active item at once, as a bubble whose **size and height are set by its priority** — the biggest, most urgent things crowd the top ("on fire ↑"), tapering down to small "someday" bubbles at the bottom, each in its category color, over a warm-to-cool sky. Unsized items wait in a tray at the very bottom. It's the surfacing idea made total — you *see* the whole shape of your obligations at a glance.
 
-- **Tap a bubble → zoom into its stratum**: the sizer opens focused on that item, its band's peers visible for comparison (below). Pinch to resize; the bubble flies between strata.
-- **Tap the hero bubble again → its edit sheet.**
-- **"◯ all" (top-left) → zoom back out** to the universe.
+Bubbles gently drift (each its own speed/phase) and a relaxation pass keeps them from overlapping — so it stays legible. Three gestures on a bubble:
+- **Tap → peek**: a little card with the item's full title + meta and quick **resize / edit** actions. (So small bubbles need no text; tap reveals them.)
+- **Long-press → edit**: straight to the full edit sheet.
+- **Flick → nudge**: shove a bubble aside; the others settle around it.
+
+From the peek's **resize** (or a list row) you **zoom into the item's stratum** — the sizer, its band's peers visible for comparison (below), pinch to resize; **tap the hero there again → edit**; **"◯ all" (top-left) zooms back out**.
 
 Zoomed in, it's the magnitude interface — a **bubble** in a **stratosphere**:
 

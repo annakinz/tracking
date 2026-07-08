@@ -269,8 +269,14 @@ select {
   animation-name: uniDrift; animation-timing-function: ease-in-out;
   animation-iteration-count: infinite; animation-direction: alternate;
   will-change: transform;
+  touch-action: none; cursor: pointer; user-select: none; -webkit-user-select: none;
+  transition: left .35s cubic-bezier(.2,.8,.25,1), top .35s cubic-bezier(.2,.8,.25,1);
 }
-.uni-bubble span { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.uni-bubble span {
+  display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden;
+  /* never stack a long word into single letters — clip it instead */
+  word-break: normal; overflow-wrap: normal;
+}
 .uni-bubble.unsized { border: 2px dashed rgba(35,38,46,.35); color: #6E7280; box-shadow: none; }
 @keyframes uniDrift {
   from { transform: translate(0, 0) rotate(0deg); }
@@ -292,6 +298,23 @@ select {
   background: rgba(255,255,255,.9); color: var(--ink); font-weight: 700; font-size: 13px;
   border-radius: 999px; padding: 8px 15px; box-shadow: 0 3px 0 rgba(0,0,0,.15);
 }
+
+/* universe peek card */
+#peekWrap { position: fixed; inset: 0; z-index: 44; }
+#peekShade { position: absolute; inset: 0; }
+#peekCard {
+  position: fixed; background: var(--card); border-radius: 16px; padding: 13px 14px;
+  box-shadow: 0 10px 34px rgba(35,38,46,.28), 0 3px 0 var(--line);
+  animation: pop .15s ease-out;
+}
+.peek-title { font-family: var(--display); font-weight: 640; font-size: 16px; line-height: 1.25; }
+.peek-meta { color: var(--muted); font-size: 12px; margin-top: 4px; }
+.peek-actions { display: flex; gap: 8px; margin-top: 11px; }
+.peek-actions button {
+  flex: 1; border-radius: 11px; padding: 9px; font-weight: 700; font-size: 13px;
+  background: #EEEEE6; color: var(--ink);
+}
+.peek-actions [data-edit] { background: var(--ink); color: #fff; }
 
 /* ---------- size stage: daylight ground up to space ---------- */
 #view-size.active { display: block; }
