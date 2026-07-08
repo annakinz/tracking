@@ -5,3 +5,8 @@ stratos-export*.json
 
 node_modules/
 .DS_Store
+
+# local test scaffolding only — the app has no build step
+scratchpad/
+package.json
+package-lock.json

@@ -197,7 +197,7 @@ function attachUniGestures(b, nd) {
     clearTimeout(lpTimer);
     if (longFired || pinching) return;  // a two-finger pinch took over — not a tap
     const dx = e.clientX - sx, dy = e.clientY - sy;
-    if (Math.hypot(dx, dy) > 26) nudgeNode(nd, dx, dy);   // flick
+    if (Math.hypot(dx, dy) > 16) nudgeNode(nd, dx, dy);   // flick
     else peekBubble(nd);                                   // tap
   });
   b.addEventListener('pointercancel', () => clearTimeout(lpTimer));
@@ -205,15 +205,19 @@ function attachUniGestures(b, nd) {
 
 function editItem(id) { document.dispatchEvent(new CustomEvent('stratos:edit', { detail: id })); }
 
-// flick: shove the bubble in the flick direction and let the others settle
+// flick: throw the bubble in the flick direction and let it STAY there.
+// The distance scales with how hard you flicked. Crucially we move its
+// target height to where it lands, otherwise the relaxation spring would
+// yank it straight back to its priority row and the flick would feel dead.
 function nudgeNode(nd, dx, dy) {
   const m = Math.hypot(dx, dy) || 1;
-  const push = Math.min(90, nd.size * 0.9);
+  const push = Math.min(180, Math.max(80, m * 1.5));
   nd.x = Math.max(nd.r + 2, Math.min(uniW - nd.r - 2, nd.x + dx / m * push));
   nd.y = Math.max(nd.r + 6, Math.min(uniH - nd.r - 46, nd.y + dy / m * push));
-  relaxUniverse(50);
+  nd.targetY = nd.y;          // settle where flicked, don't spring home
+  relaxUniverse(36);          // just enough to nudge neighbours out of the way
   layoutUniverse();
-  if (navigator.vibrate) navigator.vibrate(7);
+  if (navigator.vibrate) navigator.vibrate(9);
 }
 
 // tap: a little card showing the whole title + a couple of actions
@@ -254,6 +258,7 @@ function peekBubble(nd) {
     '<button data-edit>✎ edit</button></div>';
   els.peekWrap.hidden = false;
   positionNear(card, nd.el);
+  morphFromBubble(card, nd.el, catColor(it.category));  // the bubble grows into the card
   card.querySelector('[data-resize]').onclick = () => { els.peekWrap.hidden = true; sizeOne(it.id); };
   card.querySelector('[data-edit]').onclick = () => { els.peekWrap.hidden = true; editItem(it.id); };
   els.peekShade.onclick = () => { els.peekWrap.hidden = true; };
@@ -268,6 +273,20 @@ function positionNear(card, anchor) {
   let top = a.bottom + 8;
   if (top + ph > window.innerHeight - 74) top = Math.max(8, a.top - ph - 8);
   card.style.left = left + 'px'; card.style.top = top + 'px';
+}
+
+// morph: the card scales up out of the tapped bubble — origin pinned to the
+// bubble's centre, starting as a small disc in its category colour, opening
+// into the full card. Reads as the bubble itself unfolding.
+function morphFromBubble(card, anchor, color) {
+  const a = anchor.getBoundingClientRect();
+  const c = card.getBoundingClientRect();
+  card.style.setProperty('--morph-from', color);
+  card.style.transformOrigin =
+    (a.left + a.width / 2 - c.left) + 'px ' + (a.top + a.height / 2 - c.top) + 'px';
+  card.classList.remove('morph');
+  void card.offsetWidth;        // restart the animation
+  card.classList.add('morph');
 }
 
 // category tint for a universe bubble (kept in sync with views catSwatch dots)
