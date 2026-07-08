@@ -82,7 +82,7 @@
         <option value="shared">Shared only</option>
         <option value="private">Private (mine)</option>
       </select>
-      <label class="toggle"><input type="checkbox" id="showDone"> done</label>
+      <label class="toggle"><input type="checkbox" id="showDone"> <span id="doneCount">done</span></label>
     </div>
     <div id="listBody"></div>
   </section>
@@ -117,6 +117,9 @@
   <div id="sheetShade"></div>
   <div id="sheet"></div>
 </div>
+
+<!-- undo toast -->
+<div id="toast" hidden><span id="toastMsg"></span><button id="toastAction"></button></div>
 
 <!-- quick-edit popover: tap a chip on a list row to change that field inline -->
 <div id="quickWrap" hidden>

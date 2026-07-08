@@ -3,7 +3,7 @@
 import {
   state, save, uid, addItem, getItem, updateItem, deleteItem, markDone,
   uOf, effectivePriority, gravityBoost, effDueISO, memberName, visibleTo,
-  inboxItems, childrenOf, exportJSON, importJSON, resetAll, DIM_ORDER,
+  inboxItems, childrenOf, exportJSON, importJSON, resetAll, DIM_ORDER, BUILD,
 } from './store.js';
 import { parseDump, classifyOne } from './classify.js';
 import { agentClassify, agentPhotoTasks, getKey, setKey } from './agent.js';
@@ -117,6 +117,34 @@ export function renderTakeover() {
 
 export function changed() {
   document.dispatchEvent(new CustomEvent('stratos:changed'));
+}
+
+// transient toast with an optional action (used for undo)
+let toastTimer = null;
+export function showToast(msg, actionLabel, fn) {
+  const t = $('#toast');
+  $('#toastMsg').textContent = msg;
+  const btn = $('#toastAction');
+  if (actionLabel) {
+    btn.textContent = actionLabel;
+    btn.hidden = false;
+    btn.onclick = () => { t.hidden = true; fn(); };
+  } else {
+    btn.hidden = true;
+  }
+  t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.hidden = true; }, 5000);
+}
+
+// finish/unfinish with an undo toast, so an accidental tap is recoverable
+function finishItem(id, done) {
+  markDone(id, done);
+  changed();
+  if (done) {
+    const it = getItem(id);
+    showToast('Done: ' + (it ? it.title : 'item'), 'Undo', () => { markDone(id, false); changed(); });
+  }
 }
 
 // ---------- DUMP ----------
@@ -270,6 +298,9 @@ export function renderLists() {
   const active = topActive.filter(i => i.type !== 'issue');
   const done = items.filter(i => i.status === 'done' && !i.parent && i.type !== 'issue');
 
+  const dc = $('#doneCount');
+  if (dc) dc.textContent = done.length ? 'done (' + done.length + ')' : 'done';
+
   active.sort(sorter(sort));
 
   const body = $('#listBody');
@@ -392,7 +423,7 @@ function itemRow(i, sort, opts = {}) {
     '<button class="row-icon edit" data-edit title="edit all">✎</button>';
 
   el.onclick = (e) => {
-    if (e.target.closest('[data-done]')) { markDone(i.id, i.status !== 'done'); changed(); return; }
+    if (e.target.closest('[data-done]')) { finishItem(i.id, i.status !== 'done'); return; }
     if (e.target.closest('[data-edit]')) { openSheet(i.id); return; }
     if (e.target.closest('[data-steps]')) { openBubble(i.id); return; }
     const chipBtn = e.target.closest('.rchip[data-field]');
@@ -669,7 +700,8 @@ export function openSheet(id) {
     : '';
 
   sheet.innerHTML =
-    '<div class="sheet-grab"></div>' +
+    '<div class="sheet-head"><div class="sheet-grab"></div>' +
+      '<button id="shClose" class="sheet-x" title="Close">✕</button></div>' +
     '<input id="shTitle" value="' + esc(i.title) + '">' +
     '<div class="sheet-grid">' +
       '<label>Type <select id="shType">' + typeOpts + '</select></label>' +
@@ -776,8 +808,30 @@ export function openSheet(id) {
     changed();
   };
 
-  const close = () => { commit(); wrap.hidden = true; };
+  const close = () => { commit(); wrap.hidden = true; sheet.style.transform = ''; };
   $('#sheetShade').onclick = close;
+  $('#shClose').onclick = close;
+
+  // pull the top handle down to dismiss
+  const head = sheet.querySelector('.sheet-head');
+  let dragStart = null;
+  head.addEventListener('touchstart', (ev) => {
+    dragStart = ev.touches[0].clientY; sheet.style.transition = 'none';
+  }, { passive: true });
+  head.addEventListener('touchmove', (ev) => {
+    if (dragStart === null) return;
+    const dy = ev.touches[0].clientY - dragStart;
+    if (dy > 0) sheet.style.transform = 'translateY(' + dy + 'px)';
+  }, { passive: true });
+  const endDrag = (ev) => {
+    if (dragStart === null) return;
+    const dy = (ev.changedTouches[0]?.clientY ?? dragStart) - dragStart;
+    sheet.style.transition = '';
+    dragStart = null;
+    if (dy > 90) close(); else sheet.style.transform = '';
+  };
+  head.addEventListener('touchend', endDrag);
+  head.addEventListener('touchcancel', endDrag);
 
   sheet.querySelectorAll('[data-resize]').forEach(b => {
     b.onclick = () => {
@@ -895,7 +949,11 @@ export function renderSettings() {
     '<div class="setrow"><button id="setExport" class="chip">Export JSON</button> ' +
     '<label class="chip">Import <input type="file" id="setImport" accept=".json" hidden></label> ' +
     '<button id="setReset" class="chip danger">Reset all</button></div>' +
-    '<p class="hint">Data lives on this device for now (export/import to move it). Sync between phones is the next milestone — see DESIGN.md.</p>';
+    '<p class="hint">Data lives on this device for now (export/import to move it). Sync between phones is the next milestone — see DESIGN.md.</p>' +
+    '<div class="group-head">version</div>' +
+    '<div class="setrow">Build <b>v' + BUILD + '</b> ' +
+    '<button id="setUpdate" class="chip">Force update</button></div>' +
+    '<p class="hint">If you don’t see recent changes, tap Force update — it clears the cached app and reloads the latest. (Your data is untouched.)</p>';
 
   body.querySelectorAll('[data-fam]').forEach(inp => {
     inp.onchange = () => {
@@ -924,5 +982,20 @@ export function renderSettings() {
   };
   $('#setReset').onclick = () => {
     if (confirm('Really erase everything on this device?')) { resetAll(); location.reload(); }
+  };
+  $('#setUpdate').onclick = async () => {
+    const btn = $('#setUpdate');
+    btn.textContent = 'Updating…';
+    try {
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r => r.unregister()));
+      }
+      if (window.caches) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k)));
+      }
+    } catch (e) { /* fall through to reload regardless */ }
+    location.reload();
   };
 }

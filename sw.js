@@ -1,4 +1,4 @@
-const CACHE = 'stratos-v16';
+const CACHE = 'stratos-v17';
 const ASSETS = [
   './', 'index.html', 'style.css', 'manifest.webmanifest', 'icon.svg',
   'fonts/fraunces.woff2', 'fonts/fraunces-italic.woff2', 'fonts/outfit.woff2',
@@ -17,22 +17,22 @@ self.addEventListener('activate', (e) => {
   );
 });
 
-// network-first for navigations (so updates land), cache-first for assets;
-// never touch API calls (non-GET or cross-origin, e.g. Gemini)
+// Network-first for our own GET requests: when online you always get the
+// latest app; the cache is only a fallback for offline. This stops the app
+// from ever looking stale after a deploy. API calls (non-GET or cross-origin,
+// e.g. Gemini) are left untouched.
 self.addEventListener('fetch', (e) => {
-  if (e.request.method !== 'GET' || !e.request.url.startsWith(self.location.origin)) return;
-  if (e.request.mode === 'navigate') {
-    e.respondWith(fetch(e.request).catch(() => caches.match('./')));
-    return;
-  }
+  const req = e.request;
+  if (req.method !== 'GET' || !req.url.startsWith(self.location.origin)) return;
   e.respondWith(
-    caches.match(e.request).then(hit => hit ||
-      fetch(e.request).then(res => {
-        if (res.ok && e.request.url.startsWith(self.location.origin)) {
+    fetch(req)
+      .then(res => {
+        if (res && res.ok) {
           const copy = res.clone();
-          caches.open(CACHE).then(c => c.put(e.request, copy));
+          caches.open(CACHE).then(c => c.put(req, copy));
         }
         return res;
-      }))
+      })
+      .catch(() => caches.match(req).then(hit => hit || caches.match('./')))
   );
 });

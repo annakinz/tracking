@@ -430,7 +430,28 @@ select {
   max-width: 640px; margin: 0 auto;
 }
 @keyframes rise { from { transform: translateY(40px); opacity: 0; } }
-.sheet-grab { width: 38px; height: 4px; border-radius: 2px; background: #D9D9CC; margin: 5px auto 14px; }
+.sheet-head { position: relative; padding: 6px 0 10px; margin-bottom: 4px; touch-action: none; }
+.sheet-grab { width: 42px; height: 5px; border-radius: 3px; background: #D9D9CC; margin: 2px auto 0; }
+.sheet-x {
+  position: absolute; top: 0; right: 0; width: 34px; height: 34px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: #EEEEE6; color: var(--muted); font-size: 15px; font-weight: 700;
+}
+
+/* undo toast */
+#toast {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(var(--tabs-h) + 12px); z-index: 50;
+  display: flex; align-items: center; gap: 14px;
+  background: var(--ink); color: #fff; border-radius: 14px;
+  padding: 11px 12px 11px 16px; max-width: calc(100vw - 32px);
+  box-shadow: 0 8px 30px rgba(0,0,0,.3); animation: pop .18s ease-out;
+}
+#toast #toastMsg { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#toast #toastAction {
+  flex: none; background: var(--coral); color: #fff; font-weight: 700; font-size: 13px;
+  border-radius: 10px; padding: 7px 14px;
+}
 #shTitle {
   width: 100%; background: transparent; border: none; border-bottom: 2px solid var(--line);
   font-family: var(--display); font-size: 21px; font-weight: 640; padding: 6px 2px; margin-bottom: 14px;
