@@ -70,14 +70,10 @@ export function openUniverse() {
   renderUniverse();
 }
 
-function uniDiam(u) { // modest exponential so many bubbles fit
+function uniDiam(u) { // wide exponential: the biggest is ~8× the smallest
   const n = state.dims.priority.strata.length;
-  return 40 * Math.pow(3.1, Math.max(0, Math.min(1, u / n)));
-}
-function hashX(id, w, size) {
-  let h = 0; for (let k = 0; k < id.length; k++) h = (h * 31 + id.charCodeAt(k)) >>> 0;
-  const margin = size / 2 + 6;
-  return margin + (h % 1000) / 1000 * (w - margin * 2);
+  const Dmin = 26, Dmax = 210;
+  return Dmin * Math.pow(Dmax / Dmin, Math.max(0, Math.min(1, u / n)));
 }
 
 function renderUniverse() {
@@ -88,14 +84,31 @@ function renderUniverse() {
   const items = state.items.filter(i =>
     i.status !== 'done' && !i.parent && i.type !== 'issue' && visibleTo(i, state.profile));
 
-  const unsized = [];
-  for (const it of items) {
-    const up = uOf(it, 'priority');
-    if (up === null) { unsized.push(it); continue; }
-    const u = effectivePriority(it);           // deadline gravity lifts it
-    const size = uniDiam(u);
-    const y = (H - 54) - (u / n) * (H - 120) - size / 2; // higher priority → higher up
-    field.appendChild(uniBubble(it, size, hashX(it.id, W, size), y, false));
+  const topPad = 44, botPad = 66;
+  const unsized = items.filter(it => uOf(it, 'priority') === null);
+  const sized = items.filter(it => uOf(it, 'priority') !== null);
+
+  // group by priority band so same-priority bubbles spread across the width
+  // instead of stacking; height stays continuous within the band
+  const bands = {};
+  for (const it of sized) {
+    const u = effectivePriority(it);
+    const band = Math.max(0, Math.min(n - 1, Math.floor(u)));
+    (bands[band] || (bands[band] = [])).push({ it, u });
+  }
+  for (const band of Object.keys(bands)) {
+    const arr = bands[band].sort((a, b) => b.u - a.u);
+    const cols = arr.length;
+    arr.forEach((o, idx) => {
+      const size = uniDiam(o.u);
+      const frac = o.u / n;
+      const yCenter = (H - botPad) - frac * (H - topPad - botPad)
+        + ((idx % 2) ? 1 : -1) * size * 0.12; // tiny stagger so rows breathe
+      const y = Math.max(6, Math.min(H - size - 50, yCenter - size / 2));
+      const xc = (idx + 0.5) / cols * W;        // spread centers across width
+      const x = Math.max(6, Math.min(W - size - 6, xc - size / 2));
+      field.appendChild(uniBubble(o.it, size, x, y, false));
+    });
   }
 
   // unsized tray along the bottom
@@ -116,9 +129,25 @@ function uniBubble(it, size, x, y, isUnsized) {
   b.style.left = x + 'px';
   b.style.top = y + 'px';
   b.style.background = 'radial-gradient(circle at 34% 30%, #ffffff, ' + sw + 'cc 72%, ' + sw + ')';
-  b.style.fontSize = Math.max(9, size / 8) + 'px';
+  // text scales with the bubble and drops out entirely on the small ones
   b.innerHTML = '<span></span>';
-  b.querySelector('span').textContent = it.title;
+  if (size >= 62) {
+    b.style.fontSize = (size / 6.8) + 'px';
+    b.querySelector('span').textContent = it.title;
+  } else {
+    b.style.fontSize = '0px';
+  }
+
+  // gentle, individual drift so the sky feels alive rather than frozen
+  const rnd = (a, c) => a + Math.random() * (c - a);
+  const amp = Math.min(16, size * 0.18);
+  b.style.setProperty('--dx', rnd(-amp, amp).toFixed(1) + 'px');
+  b.style.setProperty('--dy', rnd(-amp, amp).toFixed(1) + 'px');
+  b.style.setProperty('--rot', rnd(-2.5, 2.5).toFixed(1) + 'deg');
+  const dur = rnd(7, 13);
+  b.style.animationDuration = dur.toFixed(1) + 's';
+  b.style.animationDelay = (-rnd(0, dur)).toFixed(1) + 's';
+
   b.onclick = () => sizeOne(it.id);
   return b;
 }

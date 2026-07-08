@@ -265,11 +265,17 @@ select {
   position: absolute; border-radius: 50%;
   display: flex; align-items: center; justify-content: center; text-align: center;
   padding: 9%; overflow: hidden; line-height: 1.1; font-weight: 700; color: #3a2b22;
-  box-shadow: 0 5px 0 rgba(0,0,0,.10);
-  animation: tkfloat ease-in-out infinite alternate;
+  box-shadow: 0 5px 14px rgba(60,40,20,.16);
+  animation-name: uniDrift; animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite; animation-direction: alternate;
+  will-change: transform;
 }
 .uni-bubble span { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .uni-bubble.unsized { border: 2px dashed rgba(35,38,46,.35); color: #6E7280; box-shadow: none; }
+@keyframes uniDrift {
+  from { transform: translate(0, 0) rotate(0deg); }
+  to   { transform: translate(var(--dx, 0), var(--dy, 0)) rotate(var(--rot, 0deg)); }
+}
 .uni-axis {
   position: absolute; left: 0; right: 0; text-align: center; z-index: 2;
   font-family: var(--display); font-style: italic; font-size: 13px; color: rgba(35,38,46,.4);
