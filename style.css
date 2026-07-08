@@ -253,6 +253,40 @@ select {
 .quickadd input:focus { outline: none; border-color: var(--coral); }
 .quickadd .primary { padding: 12px 18px; }
 
+/* ---------- the universe: all bubbles at once, ranked by priority ---------- */
+#sizeUniverse {
+  position: fixed; z-index: 5;
+  top: var(--header-h); bottom: var(--tabs-h); left: 0; right: 0;
+  overflow: hidden;
+  background: linear-gradient(180deg, #FFE7D3 0%, #FFF3EA 34%, #EAF2FF 72%, #F3FBF4 100%);
+}
+#universeField { position: absolute; inset: 0; }
+.uni-bubble {
+  position: absolute; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  padding: 9%; overflow: hidden; line-height: 1.1; font-weight: 700; color: #3a2b22;
+  box-shadow: 0 5px 0 rgba(0,0,0,.10);
+  animation: tkfloat ease-in-out infinite alternate;
+}
+.uni-bubble span { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.uni-bubble.unsized { border: 2px dashed rgba(35,38,46,.35); color: #6E7280; box-shadow: none; }
+.uni-axis {
+  position: absolute; left: 0; right: 0; text-align: center; z-index: 2;
+  font-family: var(--display); font-style: italic; font-size: 13px; color: rgba(35,38,46,.4);
+  pointer-events: none;
+}
+.uni-top { top: 8px; } .uni-bottom { bottom: 8px; }
+#universeHint {
+  position: absolute; bottom: calc(8px + env(safe-area-inset-bottom,0)); left: 0; right: 0;
+  display: none; /* replaced by axis labels; kept for reference */
+}
+.stage-back {
+  position: fixed; z-index: 8;
+  top: calc(var(--header-h) + 10px); left: 12px;
+  background: rgba(255,255,255,.9); color: var(--ink); font-weight: 700; font-size: 13px;
+  border-radius: 999px; padding: 8px 15px; box-shadow: 0 3px 0 rgba(0,0,0,.15);
+}
+
 /* ---------- size stage: daylight ground up to space ---------- */
 #view-size.active { display: block; }
 #sizeStage {

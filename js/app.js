@@ -1,8 +1,8 @@
 // App shell: navigation, profile picker, badge, service worker.
 
 import { state, save, inboxItems, memberName, tickLoops } from './store.js';
-import { initSizer, openSizer } from './bubbles.js';
-import { initDump, initHouse, renderLists, renderHouse, renderSettings, renderTakeover, refreshDumpResults, allSurfaced } from './views.js';
+import { initSizer, openSizer, openUniverse } from './bubbles.js';
+import { initDump, initHouse, renderLists, renderHouse, renderSettings, renderTakeover, refreshDumpResults, allSurfaced, openSheet } from './views.js';
 
 const $ = (s) => document.querySelector(s);
 let current = 'dump';
@@ -17,7 +17,7 @@ function goto(view) {
   if (view === 'lists') renderLists();
   if (view === 'house') renderHouse();
   if (view === 'settings') renderSettings();
-  if (view === 'size') openSizer(inboxItems(), () => goto('lists'));
+  if (view === 'size') openUniverse();
   window.scrollTo(0, 0);
 }
 window.stratosGoto = goto;
@@ -52,6 +52,9 @@ function init() {
     if (current === 'lists') renderLists();
     if (current === 'house') renderHouse();
   });
+
+  // tapping the hero bubble in the sizer opens its full edit sheet
+  document.addEventListener('stratos:edit', (e) => openSheet(e.detail));
 
   if (!state.profile) {
     const fr = $('#firstRun');

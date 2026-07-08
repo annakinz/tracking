@@ -3,7 +3,7 @@
 // the background shifts, peers swap to that stratum's residents, and the
 // bubble re-enters small (growing) or large (shrinking).
 
-import { state, setMagnitude, uOf, insertStratum, visibleTo } from './store.js';
+import { state, setMagnitude, uOf, insertStratum, visibleTo, effectivePriority, getItem } from './store.js';
 import { defaultDimension } from './classify.js';
 
 const MIN_W = 96, MAX_W = 250;   // bubble width across one stratum
@@ -45,10 +45,100 @@ export function initSizer() {
     chips: document.getElementById('dimChips'),
     ok: document.getElementById('okBtn'),
     skip: document.getElementById('skipBtn'),
+    universe: document.getElementById('sizeUniverse'),
+    uniField: document.getElementById('universeField'),
+    allBtn: document.getElementById('allBtn'),
   };
   bindGestures();
   els.ok.addEventListener('click', commit);
   els.skip.addEventListener('click', skip);
+  els.allBtn.addEventListener('click', openUniverse);
+}
+
+// ---------- the universe: every bubble at once, ranked by priority ----------
+
+// Show the whole sky. Sized items float at a height set by their priority
+// (top = on fire, bottom = someday) and a size set by the same; unsized ones
+// wait in a tray at the very bottom. Tap one to zoom into its stratum.
+export function openUniverse() {
+  els.stage.hidden = true;
+  els.allBtn.hidden = true;
+  const any = state.items.some(i => i.status !== 'done' && !i.parent && i.type !== 'issue' && visibleTo(i, state.profile));
+  if (!any) { els.universe.hidden = true; els.empty.hidden = false; return; }
+  els.empty.hidden = true;
+  els.universe.hidden = false;
+  renderUniverse();
+}
+
+function uniDiam(u) { // modest exponential so many bubbles fit
+  const n = state.dims.priority.strata.length;
+  return 40 * Math.pow(3.1, Math.max(0, Math.min(1, u / n)));
+}
+function hashX(id, w, size) {
+  let h = 0; for (let k = 0; k < id.length; k++) h = (h * 31 + id.charCodeAt(k)) >>> 0;
+  const margin = size / 2 + 6;
+  return margin + (h % 1000) / 1000 * (w - margin * 2);
+}
+
+function renderUniverse() {
+  const field = els.uniField;
+  field.innerHTML = '';
+  const W = field.clientWidth || 360, H = field.clientHeight || 600;
+  const n = state.dims.priority.strata.length;
+  const items = state.items.filter(i =>
+    i.status !== 'done' && !i.parent && i.type !== 'issue' && visibleTo(i, state.profile));
+
+  const unsized = [];
+  for (const it of items) {
+    const up = uOf(it, 'priority');
+    if (up === null) { unsized.push(it); continue; }
+    const u = effectivePriority(it);           // deadline gravity lifts it
+    const size = uniDiam(u);
+    const y = (H - 54) - (u / n) * (H - 120) - size / 2; // higher priority → higher up
+    field.appendChild(uniBubble(it, size, hashX(it.id, W, size), y, false));
+  }
+
+  // unsized tray along the bottom
+  unsized.forEach((it, idx) => {
+    const size = 46;
+    const cols = Math.max(1, Math.floor(W / (size + 10)));
+    const x = ((idx % cols) + 0.5) * (W / cols) - size / 2;
+    const y = H - 46 - Math.floor(idx / cols) * (size + 8);
+    field.appendChild(uniBubble(it, size, x, y, true));
+  });
+}
+
+function uniBubble(it, size, x, y, isUnsized) {
+  const sw = catColor(it.category);
+  const b = document.createElement('button');
+  b.className = 'uni-bubble' + (isUnsized ? ' unsized' : '');
+  b.style.width = b.style.height = size + 'px';
+  b.style.left = x + 'px';
+  b.style.top = y + 'px';
+  b.style.background = 'radial-gradient(circle at 34% 30%, #ffffff, ' + sw + 'cc 72%, ' + sw + ')';
+  b.style.fontSize = Math.max(9, size / 8) + 'px';
+  b.innerHTML = '<span></span>';
+  b.querySelector('span').textContent = it.title;
+  b.onclick = () => sizeOne(it.id);
+  return b;
+}
+
+// category tint for a universe bubble (kept in sync with views catSwatch dots)
+const UNI_SWATCH = ['#FF7A59', '#2FBF8F', '#8B6FE8', '#F0B000', '#3E9EE3', '#E9629F', '#97A93B', '#FF9E3D'];
+const UNI_HOMES = { health: 0, groceries: 1, supplies: 1, school: 2, wellbeing: 5, planning: 3, finance: 4, home: 6, errands: 7, shopping: 7, laundry: 4, clutter: 6 };
+function catColor(cat) {
+  const c = (cat || 'general').toLowerCase();
+  let idx = UNI_HOMES[c];
+  if (idx === undefined) { let h = 0; for (let k = 0; k < c.length; k++) h = (h * 31 + c.charCodeAt(k)) >>> 0; idx = h % UNI_SWATCH.length; }
+  return UNI_SWATCH[idx];
+}
+
+// zoom into one bubble's stratum: the sizer, focused, peers visible; "all"
+// returns to the universe; tapping the hero again opens its edit sheet.
+function sizeOne(id) {
+  els.universe.hidden = true;
+  els.allBtn.hidden = false;
+  openSizer([getItem(id)], openUniverse, 'priority');
 }
 
 // Open the sizer for a queue of items. done() runs when the queue empties
@@ -77,7 +167,9 @@ function nextItem(forcedDim) {
   item = queue.shift();
   if (!item) return showEmpty();
   els.empty.hidden = true;
+  els.universe.hidden = true;
   els.stage.hidden = false;
+  els.allBtn.hidden = false;
   dim = forcedDim || defaultDimension(item);
   const existing = uOf(item, dim);
   const n = state.dims[dim].strata.length;
@@ -225,13 +317,17 @@ function bindGestures() {
   const stage = els.stage;
   let pinchDist = 0;
   let dragY = null;
+  let tap = null; // {x, y, moved} — a still tap on the bubble opens edit
 
   stage.addEventListener('touchstart', (e) => {
     if (e.touches.length === 2) {
       pinchDist = dist(e.touches);
       dragY = null;
+      tap = null;
     } else if (e.touches.length === 1) {
       dragY = e.touches[0].clientY;
+      const onHero = e.target.closest('#theBubble') || e.target.closest('#bubbleLabelBox');
+      tap = onHero ? { x: e.touches[0].clientX, y: e.touches[0].clientY, moved: false } : null;
     }
   }, { passive: true });
 
@@ -247,6 +343,7 @@ function bindGestures() {
       pinchDist = d;
     } else if (e.touches.length === 1 && dragY !== null) {
       const y = e.touches[0].clientY;
+      if (tap && Math.abs(y - tap.y) > 10) tap.moved = true;
       u -= (y - dragY) * 0.008; // drag up = grow
       dragY = y;
       render();
@@ -255,7 +352,11 @@ function bindGestures() {
 
   stage.addEventListener('touchend', (e) => {
     if (e.touches.length < 2) pinchDist = 0;
-    if (e.touches.length === 0) dragY = null;
+    if (e.touches.length === 0) {
+      dragY = null;
+      if (tap && !tap.moved && item) editCurrent();
+      tap = null;
+    }
   });
 
   stage.addEventListener('wheel', (e) => {
@@ -265,18 +366,30 @@ function bindGestures() {
   }, { passive: false });
 
   // mouse drag for desktop testing
-  let mouseY = null;
+  let mouseY = null, mTap = null;
   stage.addEventListener('mousedown', (e) => {
     if (e.target.closest('#sizeHud') || e.target.closest('#rail')) return;
     mouseY = e.clientY;
+    const onHero = e.target.closest('#theBubble') || e.target.closest('#bubbleLabelBox');
+    mTap = onHero ? { y: e.clientY, moved: false } : null;
   });
   window.addEventListener('mousemove', (e) => {
     if (mouseY === null) return;
+    if (mTap && Math.abs(e.clientY - mTap.y) > 10) mTap.moved = true;
     u -= (e.clientY - mouseY) * 0.008;
     mouseY = e.clientY;
     render();
   });
-  window.addEventListener('mouseup', () => { mouseY = null; });
+  window.addEventListener('mouseup', () => {
+    mouseY = null;
+    if (mTap && !mTap.moved && item) editCurrent();
+    mTap = null;
+  });
+}
+
+// hand the current item off to the edit sheet (views.js listens)
+function editCurrent() {
+  if (item) document.dispatchEvent(new CustomEvent('stratos:edit', { detail: item.id }));
 }
 
 function dist(touches) {

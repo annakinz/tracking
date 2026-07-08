@@ -20,8 +20,14 @@ The product is the strict separation of three mental modes. Never mix them.
 - Every filed item is shown briefly with its classification so you *see* the trust being earned; tap to correct. Corrections feed the agent's learning.
 - Newly dumped items land in the **Inbox** (unsized).
 
-### 2. Size — the magnitude interface
-Sizing is a dedicated, game-like session. Items from the inbox appear one at a time as a **bubble** floating in a **stratosphere**.
+### 2. Size — the bubble universe
+The Size tab opens the **universe**: every active item at once, as a bubble whose **size and height are set by its priority** — the biggest, most urgent things crowd the top ("on fire ↑"), tapering down to small "someday" bubbles at the bottom, each in its category color, over a warm-to-cool sky. Unsized items wait in a tray at the very bottom. It's the surfacing idea made total — you *see* the whole shape of your obligations at a glance.
+
+- **Tap a bubble → zoom into its stratum**: the sizer opens focused on that item, its band's peers visible for comparison (below). Pinch to resize; the bubble flies between strata.
+- **Tap the hero bubble again → its edit sheet.**
+- **"◯ all" (top-left) → zoom back out** to the universe.
+
+Zoomed in, it's the magnitude interface — a **bubble** in a **stratosphere**:
 
 - **Gesture**: two-finger pinch grows/shrinks the bubble (one-finger vertical drag and mouse wheel also work). Growing past the top of the current stratum makes the bubble **jump scopes** — it leaves the current band and enters the next stratosphere up. Crucially the bubble is sized by **absolute magnitude on one continuous exponential curve** (a small seed at the bottom, bursting past the screen edges at the top) — so growth *never resets*. When it crosses into a higher band it keeps its size; it looks "small again" only because that band's peers are genuinely bigger. The effect is flying up past the little ones rather than snapping back to tiny. A springy pulse + the new band's peers rushing up mark each crossing.
 - **Strata are discrete and exponential.** Default 7 bands per dimension; each band represents roughly double the magnitude of the one below. Within a band, the bubble's size is continuous (stored as a fraction), so ordering *within* a stratum is preserved too.
