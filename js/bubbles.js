@@ -51,11 +51,19 @@ export function initSizer() {
   els.skip.addEventListener('click', skip);
 }
 
-// Open the sizer for a queue of items. done() runs when the queue empties.
+// Open the sizer for a queue of items. done() runs when the queue empties
+// after sizing — but NOT when it opens already empty (that would bounce you
+// straight back out, which reads as "nothing happens"). An empty open just
+// shows the idle guidance and stays put.
 export function openSizer(items, done, forcedDim) {
   queue = items.slice();
   onFinish = done;
-  if (!queue.length) return showEmpty();
+  if (!queue.length) {
+    els.stage.hidden = true;
+    els.empty.hidden = false;
+    onFinish = null;
+    return;
+  }
   nextItem(forcedDim);
 }
 
