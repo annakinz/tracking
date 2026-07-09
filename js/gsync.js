@@ -64,11 +64,16 @@ function friendlyError(code) {
 }
 
 // ---- OAuth ----
-// One token request. `prompt:''` tries silently (reuses an existing Google
-// session); error_callback is essential — without it a closed/blocked popup
-// or a failed silent request just hangs, which looks like a dead button.
+// One token request. Two things keep it from hanging forever (which on mobile
+// happens when the Google popup is interrupted — an app-switch or a call — and
+// its completion callback never comes back): error_callback, and a hard
+// timeout. Whichever fires first settles the promise exactly once.
 function requestToken(cfg, prompt) {
   return new Promise((res, rej) => {
+    let done = false;
+    const settle = (fn, arg) => { if (done) return; done = true; clearTimeout(timer); fn(arg); };
+    const timer = setTimeout(() => settle(rej, new Error(
+      'Sign-in timed out. Reload the app, open Settings, wait a second, then tap Connect and stay on the Google screen until it finishes.')), 70000);
     tokenClient = window.google.accounts.oauth2.initTokenClient({
       client_id: cfg.clientId,
       scope: SCOPES,
@@ -77,31 +82,42 @@ function requestToken(cfg, prompt) {
         if (resp && resp.access_token) {
           accessToken = resp.access_token;
           tokenExpiry = Date.now() + (resp.expires_in - 60) * 1000;
-          res();
+          settle(res);
         } else {
-          rej(new Error(friendlyError(resp && (resp.error || resp.error_description))));
+          settle(rej, new Error(friendlyError(resp && (resp.error || resp.error_description))));
         }
       },
-      error_callback: (err) => rej(new Error(friendlyError(err && (err.type || err.message)))),
+      error_callback: (err) => settle(rej, new Error(friendlyError(err && (err.type || err.message)))),
     });
-    try { tokenClient.requestAccessToken(); } catch (e) { rej(e); }
+    try { tokenClient.requestAccessToken(); } catch (e) { settle(rej, e); }
   });
 }
 
-export async function connect() {
-  const cfg = syncConfig();
-  if (!cfg.clientId) throw new Error('Add your Google client ID in Settings first.');
-  await ensureLibs();
-  // Try silent first if we've connected before; if that fails (expired
-  // session, mobile Safari blocking third-party cookies, …), fall back to the
-  // interactive consent popup so the button always does *something*.
-  try {
-    await requestToken(cfg, cfg.everConnected ? '' : 'consent');
-  } catch (e) {
-    await requestToken(cfg, 'consent');
-  }
-  cfg.everConnected = true;
-  save();
+let connecting = null;    // single-flight: re-taps join the in-flight attempt
+                          // instead of spawning a second popup that GIS stalls on
+export function connect() {
+  if (connecting) return connecting;
+  connecting = (async () => {
+    const cfg = syncConfig();
+    if (!cfg.clientId) throw new Error('Add your Google client ID in Settings first.');
+    // only await if the scripts aren't ready yet — awaiting a network load
+    // during the tap loses the gesture and the popup gets blocked. Preload on
+    // the Settings screen usually means this is already loaded.
+    if (!(window.google && window.google.accounts && window.google.accounts.oauth2)) await ensureLibs();
+    // First time (or after "Force update"): straight to the consent popup.
+    // Reconnecting: try silent, then fall back to the popup if the session is
+    // gone (expired, or mobile Safari blocking Google's cookies).
+    if (cfg.everConnected) {
+      try { await requestToken(cfg, ''); }
+      catch (e) { await requestToken(cfg, 'consent'); }
+    } else {
+      await requestToken(cfg, 'consent');
+    }
+    cfg.everConnected = true;
+    save();
+  })();
+  connecting.finally(() => { connecting = null; });
+  return connecting;
 }
 async function ensureToken() {
   if (isSignedIn()) return;

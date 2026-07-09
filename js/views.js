@@ -1165,9 +1165,10 @@ function wireSyncSettings() {
   $('#syKey').onchange = (e) => { c.apiKey = e.target.value.trim(); save(); };
   $('#syPriv').onchange = (e) => { c.privateBackup = e.target.checked; save(); };
   $('#syConnect').onclick = async (e) => {
-    const btn = e.currentTarget; const was = btn.textContent; btn.textContent = 'Connecting…';
+    const btn = e.currentTarget; const was = btn.textContent;
+    btn.textContent = 'Connecting…'; btn.disabled = true;
     try { await gsync.connect(); renderSettings(); }
-    catch (err) { btn.textContent = was; alert('Google sign-in failed: ' + err.message); }
+    catch (err) { btn.textContent = was; btn.disabled = false; alert('Google sign-in failed: ' + err.message); }
   };
   $('#sySyncNow').onclick = async () => { await gsync.syncNow(); renderSettings(); };
   const cr = $('#syCreate'); if (cr) cr.onclick = async () => { try { await gsync.createHousehold(); await gsync.syncNow(); renderSettings(); alert('Household created — now Invite Ebbe.'); } catch (e) { alert(e.message); } };
