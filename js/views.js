@@ -6,6 +6,7 @@ import {
   inboxItems, childrenOf, exportJSON, importJSON, resetAll, DIM_ORDER, BUILD,
   newsItems, reviewNews, clearNews, otherUsers, partnerName,
   claimItem, snoozeItem, isSnoozed, setDailyChore, finishedToday, openLoad, digestSeenToday, markDigestSeen,
+  backupList, restoreBackup,
 } from './store.js';
 import { parseDump, classifyOne } from './classify.js';
 import { agentClassify, agentPhotoTasks, getKey, setKey } from './agent.js';
@@ -1150,6 +1151,21 @@ function syncSettingsHtml() {
   );
 }
 
+function backupsHtml() {
+  const list = backupList();
+  if (!list.length) return '<p class="hint">No snapshots yet — one is taken automatically as you use the app.</p>';
+  const now = Date.now();
+  return '<div class="baklist">' + list.map(b => {
+    const d = new Date(b.at);
+    const mins = Math.round((now - b.at) / 60000);
+    const when = mins < 1 ? 'just now' : mins < 60 ? mins + 'm ago'
+      : mins < 60 * 24 ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+      : d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ', ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    return '<div class="setrow bakrow"><span>' + esc(when) + ' · <b>' + b.items + '</b> item' + (b.items === 1 ? '' : 's') + '</span>' +
+      '<button class="chip" data-bak="' + b.at + '">Restore</button></div>';
+  }).join('') + '</div>';
+}
+
 // One-line health readout: shared items pushed, last sync, and any error.
 function syncDiag(c) {
   if (c.lastError) return '⚠ ' + esc(c.lastError);
@@ -1341,6 +1357,8 @@ export function renderSettings() {
     '<label class="chip">Import <input type="file" id="setImport" accept=".json" hidden></label> ' +
     '<button id="setReset" class="chip danger">Reset all</button></div>' +
     '<p class="hint">Data lives on this device for now (export/import to move it). Sync between phones is the next milestone — see DESIGN.md.</p>' +
+    '<div class="group-head">local backups</div>' + backupsHtml() +
+    '<p class="hint">Stratos automatically keeps recent snapshots on this device (a few per day). If a sync ever drops something, restore an earlier snapshot to get it back. Restoring is itself undoable — the current state is snapshotted first.</p>' +
     '<div class="group-head">version</div>' +
     '<div class="setrow">Build <b>v' + BUILD + '</b> ' +
     '<button id="setUpdate" class="chip">Force update</button></div>' +
@@ -1356,6 +1374,17 @@ export function renderSettings() {
   $('#setNotes').onchange = (e) => { state.agentNotes = e.target.value.trim(); save(); };
   $('#setLinkPrev').onchange = (e) => { state.linkPreviews = e.target.checked; save(); };
   wireSyncSettings();
+  body.querySelectorAll('[data-bak]').forEach(btn => {
+    btn.onclick = () => {
+      const at = Number(btn.dataset.bak);
+      const b = backupList().find(x => x.at === at);
+      if (!b) return;
+      if (confirm('Restore this snapshot (' + b.items + ' items)? Your current state is saved first, so you can undo this.')) {
+        if (restoreBackup(at)) { changed(); renderSettings(); alert('Restored.'); }
+        else alert('Could not restore that snapshot.');
+      }
+    };
+  });
   $('#setSwitch').onclick = () => {
     state.profile = state.profile === 'anna' ? 'ebbe' : 'anna';
     save(); changed(); renderSettings();

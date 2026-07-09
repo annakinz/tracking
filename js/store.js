@@ -4,7 +4,7 @@ const DB_KEY = 'stratos.v1';
 
 // Build number — bump together with the service-worker CACHE in sw.js on
 // every deploy. Shown in Settings so you can confirm your phone is current.
-export const BUILD = '41';
+export const BUILD = '42';
 
 export const DIM_ORDER = ['priority', 'effort', 'difficulty', 'dread', 'restock'];
 
@@ -58,7 +58,73 @@ function load() {
 }
 
 export function save() {
-  localStorage.setItem(DB_KEY, JSON.stringify(state));
+  const json = JSON.stringify(state);
+  localStorage.setItem(DB_KEY, json);
+  maybeBackup(json);
+}
+
+// ---------- automatic local backups (undo a bad sync) ----------
+// A rolling set of full-state snapshots kept in localStorage, separate from the
+// live store. We take at most one every few hours (and at least one per new
+// day) so a destructive sync is always recoverable to an earlier point without
+// any server or manual export. Quota-safe: if the write is too big we drop the
+// oldest snapshots until it fits.
+const BAK_KEY = 'stratos.backups.v1';
+const BAK_MAX = 8;            // how many snapshots to keep
+const BAK_MIN_GAP = 6 * 3600 * 1000; // don't snapshot more than once per 6h...
+let bakLast = 0;
+
+function loadBackups() {
+  try { return JSON.parse(localStorage.getItem(BAK_KEY)) || []; } catch (e) { return []; }
+}
+function dayKey(ts) { return new Date(ts).toISOString().slice(0, 10); }
+
+function maybeBackup(json) {
+  let now;
+  try { now = Date.now(); } catch (e) { return; } // Date.now unavailable in some test envs
+  const list = loadBackups();
+  const latest = list[list.length - 1];
+  // ...but always keep one for each new calendar day, even inside the 6h window.
+  const sameDay = latest && dayKey(latest.at) === dayKey(now);
+  if (latest && (now - latest.at) < BAK_MIN_GAP && sameDay) return;
+  if (now - bakLast < 60 * 1000) return; // never more than once a minute (churn guard)
+  bakLast = now;
+  list.push({ at: now, day: dayKey(now), data: json });
+  writeBackups(list);
+}
+
+function writeBackups(list) {
+  // newest-last; trim to BAK_MAX, then shrink further if we blow the quota
+  while (list.length > BAK_MAX) list.shift();
+  while (list.length) {
+    try { localStorage.setItem(BAK_KEY, JSON.stringify(list)); return; }
+    catch (e) { list.shift(); } // quota exceeded (e.g. photos) → drop oldest, retry
+  }
+  try { localStorage.removeItem(BAK_KEY); } catch (e) {}
+}
+
+// Snapshots for the UI, newest first: { at, day, items } (count only, no payload).
+export function backupList() {
+  return loadBackups().slice().reverse().map(b => {
+    let items = 0;
+    try { items = (JSON.parse(b.data).items || []).length; } catch (e) {}
+    return { at: b.at, day: b.day, items };
+  });
+}
+
+// Restore a snapshot by timestamp. Before overwriting we snapshot the CURRENT
+// state too, so restoring is itself undoable.
+export function restoreBackup(at) {
+  const list = loadBackups();
+  const hit = list.find(b => b.at === at);
+  if (!hit) return false;
+  let restored;
+  try { restored = JSON.parse(hit.data); } catch (e) { return false; }
+  maybeBackup(JSON.stringify(state)); // keep a pre-restore point
+  state = restored;
+  save();
+  document.dispatchEvent(new CustomEvent('stratos:changed'));
+  return true;
 }
 
 export function uid() { return 'i' + (state.seq++) + '_' + Date.now().toString(36); }

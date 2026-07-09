@@ -808,3 +808,7 @@ body.dump-focus #dumpText {
 #digestCard .primary.big { margin-top: 20px; }
 
 .hint.sync-err { color: var(--danger); font-weight: 600; }
+
+.baklist { display: flex; flex-direction: column; gap: 6px; margin: 4px 0; }
+.bakrow { justify-content: space-between; align-items: center; }
+.bakrow b { color: var(--lilac-deep); }
