@@ -1151,9 +1151,22 @@ function syncSettingsHtml() {
         ? '<button id="syInvite" class="chip">Invite ' + esc(partnerName()) + ' (email)</button> <span class="hint">household connected</span>'
         : '<button id="syCreate" class="chip">Create household</button> <button id="syJoin" class="chip">Join ' + esc(partnerName()) + '’s</button>') +
     '</div>' +
+    '<p class="hint' + (c.lastError ? ' sync-err' : '') + '" id="syDiag">' + syncDiag(c) + '</p>' +
     '<label class="toggle" style="padding:6px 0"><input type="checkbox" id="syPriv"' + (c.privateBackup !== false ? ' checked' : '') + '> back up my private items to my own Drive</label>' +
     '<p class="hint">Shared items sync to a household file both of you can read; private items back up only to your own Drive. Set up a free Google Cloud project (client ID + API key) — see the chat instructions.</p>'
   );
+}
+
+// A one-line health readout so both phones can be compared: the household
+// file id (last 6 chars — must MATCH on both devices), how many shared items
+// this phone last pushed, and the last error if any.
+function syncDiag(c) {
+  if (c.lastError) return '⚠ ' + esc(c.lastError);
+  const parts = [];
+  if (c.householdFileId) parts.push('file …' + esc(String(c.householdFileId).slice(-6)));
+  if (typeof c.lastSharedCount === 'number') parts.push(c.lastSharedCount + ' shared items pushed');
+  if (c.lastSync) parts.push('synced ' + new Date(c.lastSync).toLocaleTimeString());
+  return parts.length ? parts.join(' · ') : 'not synced yet — tap Sync now';
 }
 
 function wireSyncSettings() {
@@ -1170,7 +1183,14 @@ function wireSyncSettings() {
     try { await gsync.connect(); renderSettings(); }
     catch (err) { btn.textContent = was; btn.disabled = false; alert('Google sign-in failed: ' + err.message); }
   };
-  $('#sySyncNow').onclick = async () => { await gsync.syncNow(); renderSettings(); };
+  $('#sySyncNow').onclick = async () => {
+    await gsync.syncNow();
+    renderSettings();
+    const s = state.sync || {};
+    alert(s.lastError
+      ? 'Sync problem: ' + s.lastError
+      : 'Synced ✓\n' + (s.lastSharedCount || 0) + ' shared items pushed to the household file (…' + String(s.householdFileId || '').slice(-6) + ').');
+  };
   const cr = $('#syCreate'); if (cr) cr.onclick = async () => { try { await gsync.createHousehold(); await gsync.syncNow(); renderSettings(); alert('Household created — now Invite ' + partnerName() + '.'); } catch (e) { alert(e.message); } };
   const jn = $('#syJoin'); if (jn) jn.onclick = async () => { try { const id = await gsync.joinHousehold(); if (id) { await gsync.syncNow(); renderSettings(); } } catch (e) { alert(e.message); } };
   const iv = $('#syInvite'); if (iv) iv.onclick = async () => { const em = prompt(partnerName() + '’s Google email:'); if (em) { try { await gsync.invite(em.trim()); alert('Invited ' + em); } catch (e) { alert(e.message); } } };

@@ -139,11 +139,20 @@ async function readFile(id) {
   return res.json();
 }
 async function writeFile(id, obj) {
-  await fetch('https://www.googleapis.com/upload/drive/v3/files/' + id + '?uploadType=media', {
+  await ensureToken();
+  const res = await fetch('https://www.googleapis.com/upload/drive/v3/files/' + id + '?uploadType=media', {
     method: 'PATCH',
     headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
     body: JSON.stringify(obj),
   });
+  // a silently-dropped write (e.g. read-only access to the household file) is
+  // the classic "my items never reach the other person" bug — surface it
+  if (!res.ok) {
+    const t = (await res.text().catch(() => '')).slice(0, 140);
+    if (res.status === 403) throw new Error("can't write to the household file — you have read-only access. The person who created it must Invite you as an editor.");
+    throw new Error('write ' + res.status + ' ' + t);
+  }
+  return res;
 }
 async function createFile(name, obj) {
   await ensureToken();
@@ -224,9 +233,12 @@ export async function syncNow() {
     // shared household file
     if (cfg.householdFileId) {
       let remote = null;
-      try { remote = await readFile(cfg.householdFileId); } catch (e) { /* first read may 404 */ }
+      try { remote = await readFile(cfg.householdFileId); }
+      catch (e) { if (!/ 404\b/.test(e.message)) throw e; } // 404 = brand-new file is fine; 403 etc must surface
       changed = applySync('shared', remote) || changed;
-      await writeFile(cfg.householdFileId, syncSnapshot('shared', state.profile));
+      const snap = syncSnapshot('shared', state.profile);
+      await writeFile(cfg.householdFileId, snap);
+      cfg.lastSharedCount = Object.keys(snap.items).length; // how many shared items we put in the file
     }
     // private backup file in this person's own Drive
     if (cfg.privateBackup !== false) {
@@ -236,10 +248,12 @@ export async function syncNow() {
       cfg.privateFileId = pid;
     }
     cfg.lastSync = Date.now();
+    cfg.lastError = null;
     save();
     onStatus('ok');
     if (changed) document.dispatchEvent(new CustomEvent('stratos:changed'));
   } catch (e) {
+    cfg.lastError = e.message; save();
     console.warn('sync failed:', e.message);
     onStatus('error:' + e.message);
   } finally {
