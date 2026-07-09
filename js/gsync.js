@@ -43,6 +43,25 @@ function ensureLibs() {
   }
   return libsReady;
 }
+// Warm the scripts up early (as soon as Settings opens) so that when the user
+// taps Connect the popup opens *inside* the tap gesture. Loading them for the
+// first time during the tap loses the gesture on mobile Safari and the sign-in
+// popup gets blocked — the #1 cause of "sign-in failed" on a first connect.
+export function preloadLibs() { return ensureLibs().catch(() => {}); }
+
+// turn GIS/OAuth error codes into something a human can act on
+function friendlyError(code) {
+  const c = String(code || '');
+  if (/popup_failed_to_open|popup.*block/i.test(c))
+    return 'The Google popup was blocked. Allow pop-ups for this site, then tap Connect again.';
+  if (/popup_closed|cancel/i.test(c))
+    return 'Sign-in was closed before it finished — tap Connect and complete the Google screen.';
+  if (/access_denied|admin_policy|org_internal/i.test(c))
+    return 'Google blocked access. Add this Google account as a Test user in your Cloud project (console.cloud.google.com/auth/audience), then retry.';
+  if (/idpiframe|origin|redirect|invalid_client/i.test(c))
+    return 'This Google account/project isn’t set up for this site yet (origin or client-ID mismatch). Check the OAuth client’s Authorized JavaScript origin is https://annakinz.github.io.';
+  return c || 'unknown error';
+}
 
 // ---- OAuth ----
 // One token request. `prompt:''` tries silently (reuses an existing Google
@@ -60,10 +79,10 @@ function requestToken(cfg, prompt) {
           tokenExpiry = Date.now() + (resp.expires_in - 60) * 1000;
           res();
         } else {
-          rej(new Error(resp && resp.error ? resp.error : 'no access token'));
+          rej(new Error(friendlyError(resp && (resp.error || resp.error_description))));
         }
       },
-      error_callback: (err) => rej(new Error((err && (err.message || err.type)) || 'sign-in was cancelled')),
+      error_callback: (err) => rej(new Error(friendlyError(err && (err.type || err.message)))),
     });
     try { tokenClient.requestAccessToken(); } catch (e) { rej(e); }
   });

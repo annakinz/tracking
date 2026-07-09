@@ -1158,6 +1158,7 @@ function syncSettingsHtml() {
 
 function wireSyncSettings() {
   const c = state.sync || (state.sync = {});
+  if (c.clientId) gsync.preloadLibs(); // warm Google's scripts before the tap
   const setStatus = (s) => { const el = $('#syStatus'); if (el) el.textContent = s; };
   gsync.onSyncStatus((s) => setStatus(s === 'ok' ? 'synced ' + new Date().toLocaleTimeString() : s === 'syncing' ? 'syncing…' : s.startsWith('error') ? s.slice(6) : s));
   $('#syClient').onchange = (e) => { c.clientId = e.target.value.trim(); save(); };
