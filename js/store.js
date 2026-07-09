@@ -4,7 +4,7 @@ const DB_KEY = 'stratos.v1';
 
 // Build number — bump together with the service-worker CACHE in sw.js on
 // every deploy. Shown in Settings so you can confirm your phone is current.
-export const BUILD = '36';
+export const BUILD = '37';
 
 export const DIM_ORDER = ['priority', 'effort', 'difficulty', 'dread', 'restock'];
 

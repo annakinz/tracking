@@ -78,74 +78,64 @@ function friendlyError(code) {
   return c || 'unknown error';
 }
 
-// ---- OAuth ----
-// One token request. Two things keep it from hanging forever (which on mobile
-// happens when the Google popup is interrupted — an app-switch or a call — and
-// its completion callback never comes back): error_callback, and a hard
-// timeout. Whichever fires first settles the promise exactly once.
-function requestToken(cfg, prompt) {
-  return new Promise((res, rej) => {
-    let done = false;
-    const settle = (fn, arg) => { if (done) return; done = true; clearTimeout(timer); fn(arg); };
-    const timer = setTimeout(() => settle(rej, new Error(
-      'Sign-in timed out. Reload the app, open Settings, wait a second, then tap Connect and stay on the Google screen until it finishes.')), 70000);
-    tokenClient = window.google.accounts.oauth2.initTokenClient({
-      client_id: cfg.clientId,
-      scope: SCOPES,
-      prompt,
-      callback: (resp) => {
-        if (resp && resp.access_token) {
-          accessToken = resp.access_token;
-          tokenExpiry = Date.now() + (resp.expires_in - 60) * 1000;
-          saveToken();
-          settle(res);
-        } else {
-          settle(rej, new Error(friendlyError(resp && (resp.error || resp.error_description))));
-        }
-      },
-      error_callback: (err) => settle(rej, new Error(friendlyError(err && (err.type || err.message)))),
-    });
-    try { tokenClient.requestAccessToken(); } catch (e) { settle(rej, e); }
-  });
+// ---- OAuth: full-page redirect (implicit) flow ----
+// Popups are blocked on iOS home-screen web apps and often in mobile Safari,
+// which is why "Connect" kept failing. Instead we send the whole page to
+// Google and it bounces back with the token in the URL — works everywhere,
+// no popup. The redirect URL must be registered as an Authorized redirect URI
+// on the OAuth client (the app's own directory URL).
+const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
+export function redirectUri() {
+  return location.origin + location.pathname.replace(/[^/]*$/, ''); // the app's directory, e.g. …/tracking/
 }
 
-let connecting = null;    // single-flight: re-taps join the in-flight attempt
-                          // instead of spawning a second popup that GIS stalls on
 export function connect() {
-  if (connecting) return connecting;
-  connecting = (async () => {
-    const cfg = syncConfig();
-    if (!cfg.clientId) throw new Error('Add your Google client ID in Settings first.');
-    // only await if the scripts aren't ready yet — awaiting a network load
-    // during the tap loses the gesture and the popup gets blocked. Preload on
-    // the Settings screen usually means this is already loaded.
-    if (!(window.google && window.google.accounts && window.google.accounts.oauth2)) await ensureLibs();
-    // First time (or after "Force update"): straight to the consent popup.
-    // Reconnecting: try silent, then fall back to the popup if the session is
-    // gone (expired, or mobile Safari blocking Google's cookies).
-    if (cfg.everConnected) {
-      try { await requestToken(cfg, ''); }
-      catch (e) { await requestToken(cfg, 'consent'); }
-    } else {
-      await requestToken(cfg, 'consent');
-    }
-    cfg.everConnected = true;
-    save();
-  })();
-  connecting.finally(() => { connecting = null; });
-  return connecting;
-}
-// Sync uses this — it must NEVER open the interactive popup (a popup outside a
-// tap gesture is blocked). It only reuses the stored token or refreshes it
-// silently; if that's not possible it asks the user to reconnect via the
-// Connect button (the one place a real tap can open the Google screen).
-async function ensureToken() {
-  if (isSignedIn()) return;
   const cfg = syncConfig();
-  if (!cfg.clientId) throw new Error('Add your Google client ID and tap Connect Google in Settings.');
-  await ensureLibs();
-  try { await requestToken(cfg, ''); }
-  catch (e) { throw new Error('Google sign-in expired — open Settings and tap Connect Google to reconnect.'); }
+  if (!cfg.clientId) throw new Error('Add your Google client ID in Settings first.');
+  const nonce = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  localStorage.setItem('stratos.oauthState', nonce); // checked on the way back
+  const params = new URLSearchParams({
+    client_id: cfg.clientId,
+    redirect_uri: redirectUri(),
+    response_type: 'token',
+    scope: SCOPES,
+    include_granted_scopes: 'true',
+    state: nonce,
+    prompt: 'consent',
+  });
+  location.href = AUTH_ENDPOINT + '?' + params.toString();
+  return new Promise(() => {}); // page is navigating away; never resolves here
+}
+
+// On load: if we came back from Google with a token in the URL fragment, store
+// it (and scrub it out of the address bar). Returns true if we just connected.
+export function handleRedirect() {
+  const h = location.hash || '';
+  if (h.indexOf('access_token=') < 0 && h.indexOf('error=') < 0) return false;
+  const p = new URLSearchParams(h.replace(/^#/, ''));
+  const saved = localStorage.getItem('stratos.oauthState');
+  localStorage.removeItem('stratos.oauthState');
+  history.replaceState(null, '', location.pathname + location.search); // never leave the token in history
+  const cfg = syncConfig();
+  const err = p.get('error');
+  if (err) { cfg.lastError = 'Google sign-in: ' + friendlyError(err); save(); return false; }
+  const token = p.get('access_token'), state = p.get('state');
+  if (!token || !state || state !== saved) { cfg.lastError = 'Sign-in response didn’t match — tap Connect again.'; save(); return false; }
+  accessToken = token;
+  tokenExpiry = Date.now() + (parseInt(p.get('expires_in') || '3600', 10) - 60) * 1000;
+  cfg.tok = { access: token, exp: tokenExpiry };
+  cfg.everConnected = true;
+  cfg.lastError = null;
+  save();
+  return true;
+}
+
+// Sync uses this — it must never navigate away or pop up. It reuses the stored
+// token; if it's gone/expired the user reconnects via the Connect button.
+async function ensureToken() {
+  loadToken();
+  if (isSignedIn()) return;
+  throw new Error('Google sign-in expired — open Settings and tap Connect Google to reconnect.');
 }
 
 // ---- Drive REST ----

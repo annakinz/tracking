@@ -3,7 +3,7 @@
 import { state, save, inboxItems, memberName, tickLoops } from './store.js';
 import { initSizer, openSizer, openUniverse } from './bubbles.js';
 import { initDump, initHouse, renderLists, renderHouse, renderSettings, renderTakeover, renderDigest, refreshDumpResults, allSurfaced, openSheet, initNews, renderNewsBlob } from './views.js';
-import { syncNow, syncConfigured } from './gsync.js';
+import { syncNow, syncConfigured, handleRedirect } from './gsync.js';
 
 const $ = (s) => document.querySelector(s);
 let current = 'dump';
@@ -38,6 +38,9 @@ function refreshProfileChip() {
 }
 
 function init() {
+  // if we just bounced back from the Google sign-in redirect, capture the token
+  const justConnected = handleRedirect();
+
   document.querySelectorAll('.tab').forEach(t =>
     t.addEventListener('click', () => goto(t.dataset.view)));
   $('#settingsBtn').addEventListener('click', () => goto('settings'));
@@ -86,10 +89,16 @@ function init() {
   refreshProfileChip();
   refreshBadge();
   renderNewsBlob(); // show any unreviewed changes from the other person
-  goto('lists'); // the app opens to your ranked list
-  // once a day, a warm digest greets you; otherwise the ember takeover floats
-  // whatever needs eyes before everything else
-  if (!renderDigest()) renderTakeover();
+  // just came back signed-in? land on Settings and sync immediately
+  if (justConnected) {
+    goto('settings');
+    syncNow();
+  } else {
+    goto('lists'); // the app opens to your ranked list
+    // once a day, a warm digest greets you; otherwise the ember takeover floats
+    // whatever needs eyes before everything else
+    if (!renderDigest()) renderTakeover();
+  }
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch(() => {});
