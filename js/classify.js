@@ -117,6 +117,18 @@ function detectScope(text) {
   return null;
 }
 
+// explicit routing prefix: "ebbe: call the plumber" or "@ebbe fix the gate"
+// hands the item to that person and strips the prefix from the title.
+function stripAssignee(raw) {
+  const s = String(raw);
+  const m = s.match(/^\s*@?([\p{L}]+)\s*(?::|-|–)\s+(.+)$/u) || s.match(/^\s*@([\p{L}]+)\s+(.+)$/u);
+  if (m) {
+    const f = state.family.find(x => x.name && x.name.toLowerCase() === m[1].toLowerCase());
+    if (f && f.id !== 'house') return { scope: f.id, text: m[2].trim() };
+  }
+  return { scope: null, text: s };
+}
+
 function matchSupply(t) {
   for (const s of SUPPLY) if (t.includes(s)) return true;
   return false;
@@ -128,9 +140,11 @@ function isGrocery(t) {
 }
 
 export function classifyOne(raw) {
-  const t = raw.toLowerCase().trim();
-  const toks = tokens(raw);
-  const due = parseDue(raw);
+  const assign = stripAssignee(raw);
+  const body = assign.text;                 // the task text without any "name:" prefix
+  const t = body.toLowerCase().trim();
+  const toks = tokens(body);
+  const due = parseDue(body);
   const words = t.split(/\s+/);
 
   let type, scope, category, dimension;
@@ -157,8 +171,8 @@ export function classifyOne(raw) {
   }
   if (!category) category = type === 'issue' ? 'wellbeing' : 'general';
 
-  if (!scope) scope = detectScope(raw) || state.profile;
-  if (/\b(house|home|kitchen|bathroom|garage|yard)\b/.test(t) && !detectScope(raw)) {
+  if (!scope) scope = assign.scope || detectScope(body) || state.profile;
+  if (/\b(house|home|kitchen|bathroom|garage|yard)\b/.test(t) && !assign.scope && !detectScope(body)) {
     if (category === 'home') scope = 'house';
   }
 
@@ -178,7 +192,7 @@ export function classifyOne(raw) {
   // and privacy shouldn't flip from one stray match.
   const MIN_SCORE = { type: 2, category: 1, scope: 1, visibility: 2, source: 1 };
   for (const field of ['type', 'category', 'scope', 'visibility', 'source']) {
-    const ex = exactGuess(field, raw);
+    const ex = exactGuess(field, body);
     const lg = ex ? null : learnedGuess(field, toks, MIN_SCORE[field]);
     const v = ex || (lg && lg.value);
     if (v) {
@@ -189,8 +203,9 @@ export function classifyOne(raw) {
       else visibility = v;
     }
   }
+  if (assign.scope) scope = assign.scope;      // an explicit "name:" prefix wins
 
-  const title = raw.trim().replace(/\s+/g, ' ').replace(/^(.)/, c => c.toUpperCase());
+  const title = body.trim().replace(/\s+/g, ' ').replace(/^(.)/, c => c.toUpperCase());
 
   return { raw, title, type, scope, category, visibility, due, dimension, source };
 }

@@ -2,7 +2,7 @@
 
 import { state, save, inboxItems, memberName, tickLoops } from './store.js';
 import { initSizer, openSizer, openUniverse } from './bubbles.js';
-import { initDump, initHouse, renderLists, renderHouse, renderSettings, renderTakeover, refreshDumpResults, allSurfaced, openSheet, initNews, renderNewsBlob } from './views.js';
+import { initDump, initHouse, renderLists, renderHouse, renderSettings, renderTakeover, renderDigest, refreshDumpResults, allSurfaced, openSheet, initNews, renderNewsBlob } from './views.js';
 import { syncNow, syncConfigured } from './gsync.js';
 
 const $ = (s) => document.querySelector(s);
@@ -87,7 +87,9 @@ function init() {
   refreshBadge();
   renderNewsBlob(); // show any unreviewed changes from the other person
   goto('lists'); // the app opens to your ranked list
-  renderTakeover(); // if anything is surfacing, it floats before everything else
+  // once a day, a warm digest greets you; otherwise the ember takeover floats
+  // whatever needs eyes before everything else
+  if (!renderDigest()) renderTakeover();
 
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     navigator.serviceWorker.register('sw.js').catch(() => {});

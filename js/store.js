@@ -4,7 +4,7 @@ const DB_KEY = 'stratos.v1';
 
 // Build number — bump together with the service-worker CACHE in sw.js on
 // every deploy. Shown in Settings so you can confirm your phone is current.
-export const BUILD = '29';
+export const BUILD = '30';
 
 export const DIM_ORDER = ['priority', 'effort', 'difficulty', 'dread', 'restock'];
 
@@ -132,11 +132,17 @@ export function tickLoops() {
   const now = Date.now();
   let dirty = false;
   for (const i of state.items) {
-    if (i.status === 'done' && i.loop?.every && i.doneAt &&
-        now >= i.doneAt + i.loop.every * 0.6 * 86400e3) {
-      i.status = 'active';
-      dirty = true;
+    if (i.status !== 'done' || !i.loop?.every || !i.doneAt) continue;
+    // daily chores come back at the next calendar day; longer loops ramp back
+    // in at ~60% of their cycle so deadline gravity has room to build.
+    let reawakenAt;
+    if (i.loop.every <= 1) {
+      const d = new Date(i.doneAt); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + 1);
+      reawakenAt = d.getTime();
+    } else {
+      reawakenAt = i.doneAt + i.loop.every * 0.6 * 86400e3;
     }
+    if (now >= reawakenAt) { i.status = 'active'; dirty = true; }
   }
   if (dirty) save();
   return dirty;
@@ -219,16 +225,75 @@ export function attachDoneNote(id, note) {
 // A little message thread lives on each shared item. Adding one bumps
 // updatedAt so it syncs; the other person's copy surfaces it as news.
 // kind: 'msg' (plain), 'ask' (please take this), 'thanks' (a heart back).
-export function addMessage(id, text, kind = 'msg') {
+export function addMessage(id, text, kind = 'msg', photo = null) {
   const item = getItem(id);
   if (!item) return;
   const t = String(text || '').trim();
-  if (!t) return item;
-  (item.messages || (item.messages = [])).push({ id: uid(), by: state.profile, text: t, kind, at: Date.now() });
+  if (!t && !photo) return item;
+  const msg = { id: uid(), by: state.profile, text: t, kind, at: Date.now() };
+  if (photo) msg.photo = photo;                 // small shrunk data-URL, syncs with the item
+  (item.messages || (item.messages = [])).push(msg);
   touch(item);
   save();
   return item;
 }
+
+// ---- "I'm on it": claim a shared task so you don't both do it ----
+export function claimItem(id, on = true) {
+  const item = getItem(id);
+  if (!item) return;
+  item.claimedBy = on ? state.profile : null;
+  item.claimedAt = on ? Date.now() : null;
+  touch(item);
+  save();
+  return item;
+}
+
+// ---- snooze: push something out of sight until a chosen time ----
+export function snoozeItem(id, untilMs) {
+  const item = getItem(id);
+  if (!item) return;
+  item.snoozeUntil = untilMs || null;
+  touch(item);
+  save();
+  return item;
+}
+export function isSnoozed(item) { return !!item.snoozeUntil && item.snoozeUntil > Date.now(); }
+
+// ---- daily chore: a shared thing that comes back every day ----
+export function setDailyChore(id, on) {
+  const item = getItem(id);
+  if (!item) return;
+  item.loop = on ? { every: 1, auto: false, history: item.loop?.history || [] } : null;
+  touch(item);
+  save();
+  return item;
+}
+
+// ---- daily digest / recap data ----
+function localDay(d = new Date()) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function startOfToday() { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); }
+
+export function finishedToday() {
+  const s = startOfToday();
+  return state.items.filter(i => i.status === 'done' && (i.doneAt || 0) >= s && !i.parent &&
+    i.type !== 'issue' && visibleTo(i, state.profile));
+}
+// how many open shared things each person is holding (claim wins over scope)
+export function openLoad() {
+  const load = {};
+  for (const i of state.items) {
+    if (i.status === 'active' && !i.parent && i.type !== 'issue' && i.visibility === 'shared' && !isSnoozed(i)) {
+      const who = i.claimedBy || (state.family.find(f => f.id === i.scope && f.user) ? i.scope : null);
+      if (who) load[who] = (load[who] || 0) + 1;
+    }
+  }
+  return load;
+}
+export function digestSeenToday() { return state.lastDigestDay === localDay(); }
+export function markDigestSeen() { state.lastDigestDay = localDay(); save(); }
 
 // ---------- strata math ----------
 
@@ -421,7 +486,15 @@ function scanMessages(it, seeding) {
   const me = state.profile;
   for (const m of it.messages || []) {
     if (!m || m.by === me) continue;
-    pushNews({ itemId: it.id, kind: 'message', subkind: m.kind || 'msg', by: m.by, title: it.title, note: m.text || '', at: m.at || 0 }, seeding);
+    pushNews({ itemId: it.id, kind: 'message', subkind: m.kind || 'msg', by: m.by, title: it.title, note: m.text || (m.photo ? '📷 photo' : ''), at: m.at || 0 }, seeding);
+  }
+}
+
+// surface when the other person claims ("I'm on it") a shared task
+function scanClaim(it, prevClaim, seeding) {
+  const me = state.profile;
+  if (it.visibility === 'shared' && it.claimedBy && it.claimedBy !== me && it.claimedBy !== prevClaim) {
+    pushNews({ itemId: it.id, kind: 'claim', by: it.claimedBy, title: it.title, note: '', at: it.claimedAt || it.updatedAt || 0 }, seeding);
   }
 }
 
@@ -446,13 +519,13 @@ export function applySync(kind, remote) {
     const local = getItem(it.id);
     if (!local) {
       state.items.push({ ...it, media: [] }); changed = true;
-      if (watch) { detectNews(it, undefined, seeding); scanMessages(it, seeding); }
+      if (watch) { detectNews(it, undefined, seeding); scanMessages(it, seeding); scanClaim(it, undefined, seeding); }
     } else if ((it.updatedAt || 0) > (local.updatedAt || 0)) {
-      const prev = local.status;
+      const prev = local.status, prevClaim = local.claimedBy;
       const idx = state.items.findIndex(x => x.id === it.id);
       state.items[idx] = { ...it, media: local.media || [] }; // keep local photos
       changed = true;
-      if (watch) { detectNews(it, prev, seeding); scanMessages(it, seeding); }
+      if (watch) { detectNews(it, prev, seeding); scanMessages(it, seeding); scanClaim(it, prevClaim, seeding); }
     }
   }
   // prune tombstones + seen-news keys older than 90 days so the maps don't grow

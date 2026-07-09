@@ -5,6 +5,7 @@ import {
   uOf, effectivePriority, gravityBoost, effDueISO, memberName, visibleTo,
   inboxItems, childrenOf, exportJSON, importJSON, resetAll, DIM_ORDER, BUILD,
   newsItems, reviewNews, clearNews, otherUsers, partnerName,
+  claimItem, snoozeItem, isSnoozed, setDailyChore, finishedToday, openLoad, digestSeenToday, markDigestSeen,
 } from './store.js';
 import { parseDump, classifyOne } from './classify.js';
 import { agentClassify, agentPhotoTasks, getKey, setKey } from './agent.js';
@@ -17,6 +18,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
 
 let personFilterVal = 'all';
 let wellbeingOpen = false;
+let snoozeOpen = false;
 let groupMode = false; // false = flat ranked list; true = grouped by category
 // the filed-results cards on the Dump screen are a live view of the last
 // dump; kept here so edits (which mutate the items in place) can re-render
@@ -60,8 +62,9 @@ export function catSwatch(cat) {
 export function surfacedOf(items) {
   return items
     // struggles (issues) never surface on the ember screen — the takeover
-    // is a call to action, and a struggle isn't actionable the same way
-    .filter(i => i.status === 'active' && i.type !== 'issue')
+    // is a call to action, and a struggle isn't actionable the same way;
+    // snoozed items stay out of sight until their time comes
+    .filter(i => i.status === 'active' && i.type !== 'issue' && !isSnoozed(i))
     .map(i => {
       const boost = gravityBoost(i);
       const dread = uOf(i, 'dread');
@@ -114,6 +117,45 @@ export function renderTakeover() {
   });
   $('#takeoverDismiss').onclick = () => { el.hidden = true; };
   el.hidden = false;
+  return true;
+}
+
+// Once-a-day household digest: a warm good-morning with what's on your plate,
+// a celebratory recap of what you two finished today, and who's carrying what.
+// Returns true if it showed (so the ember takeover can stand down for it).
+export function renderDigest() {
+  if (!state.profile || digestSeenToday()) return false;
+  const plate = allSurfaced().slice(0, 4);
+  const fin = finishedToday();
+  if (!plate.length && !fin.length) { markDigestSeen(); return false; }
+  const hour = new Date().getHours();
+  const greet = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  const load = openLoad();
+
+  let html = '<div class="dg-greet">' + greet + ', ' + esc(memberName(state.profile)) + '</div>';
+  if (plate.length) {
+    html += '<div class="dg-head">on the horizon</div>' +
+      plate.map(s => '<div class="dg-row"><span class="dg-title">' + esc(s.i.title) + '</span>' +
+        '<span class="dg-why">' + esc(s.why) + '</span></div>').join('');
+  }
+  if (fin.length) {
+    html += '<div class="dg-head">knocked out today 🎉</div>' +
+      fin.slice(0, 6).map(i => '<div class="dg-row done"><span class="dg-check">✓</span>' +
+        '<span class="dg-title">' + esc(i.title) + '</span>' +
+        (i.doneBy && i.doneBy !== state.profile ? '<span class="dg-by">' + esc(memberName(i.doneBy)) + '</span>' : '') +
+        '</div>').join('');
+  }
+  const lk = Object.keys(load);
+  if (lk.length) html += '<div class="dg-load">' + lk.map(k =>
+    '<span class="dg-load-item"><b>' + load[k] + '</b> ' + esc(memberName(k)) + '</span>').join('') + '</div>';
+  html += '<button id="dgClose" class="primary big">Let’s go →</button>';
+
+  const wrap = $('#digestWrap');
+  $('#digestCard').innerHTML = html;
+  wrap.hidden = false;
+  const close = () => { markDigestSeen(); wrap.hidden = true; };
+  $('#dgClose').onclick = close;
+  $('#digestShade').onclick = close;
   return true;
 }
 
@@ -218,6 +260,7 @@ function openNews() {
     else if (sub === 'added') line = '<b>' + who + '</b> added';
     else if (sub === 'ask') line = '<b>' + who + '</b> asked you to take';
     else if (sub === 'thanks') line = '<b>' + who + '</b> sent you';
+    else if (sub === 'claim') line = '<b>' + who + '</b> is on it —';
     else line = '<b>' + who + '</b> messaged about';
     const showHeart = sub === 'done';                    // react to a completion
     const card = document.createElement('div');
@@ -411,7 +454,8 @@ export function renderLists() {
   // struggles aren't tasks: they live behind the wellbeing chip, not
   // between "buy milk" and "fix the gate"
   const issues = topActive.filter(i => i.type === 'issue');
-  const active = topActive.filter(i => i.type !== 'issue');
+  const active = topActive.filter(i => i.type !== 'issue' && !isSnoozed(i));
+  const snoozed = topActive.filter(i => i.type !== 'issue' && isSnoozed(i));
   const done = items.filter(i => i.status === 'done' && !i.parent && i.type !== 'issue');
 
   const dc = $('#doneCount');
@@ -422,7 +466,7 @@ export function renderLists() {
   const body = $('#listBody');
   body.innerHTML = '';
 
-  if (!active.length && !done.length) {
+  if (!active.length && !done.length && !snoozed.length) {
     body.innerHTML = '<div class="empty"><div class="empty-art">○</div><p>Nothing here yet. Dump something!</p></div>';
     return;
   }
@@ -496,6 +540,22 @@ export function renderLists() {
     done.sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
     for (const i of done) body.appendChild(itemRow(i, sort));
   }
+
+  if (snoozed.length) {
+    const sb = document.createElement('button');
+    sb.className = 'wb-chip snoozed-chip' + (snoozeOpen ? ' open' : '');
+    sb.textContent = '😴 snoozed · ' + snoozed.length;
+    sb.onclick = () => { snoozeOpen = !snoozeOpen; renderLists(); };
+    body.appendChild(sb);
+    if (snoozeOpen) {
+      snoozed.sort((a, b) => (a.snoozeUntil || 0) - (b.snoozeUntil || 0));
+      for (const i of snoozed) {
+        const row = itemRow(i, sort);
+        row.style.opacity = '.66';
+        body.appendChild(row);
+      }
+    }
+  }
 }
 
 function sorter(sort) {
@@ -530,8 +590,9 @@ function itemRow(i, sort, opts = {}) {
       (i.scope !== state.profile ? rchip('scope', esc(memberName(i.scope))) : '') +
       (i.due && !opts.noDue ? rchip('due', (boost >= 1.5 ? '⚑ ' : boost > 0 ? '◷ ' : 'due ') + i.due, boost > 0 ? 'hot' : '') : '') +
       (i.source ? rchip('source', '@ ' + esc(i.source)) : '') +
-      (i.loop?.every && !opts.noDue ? rchip('loop', '↺ ~' + i.loop.every + 'd') : '') +
+      (i.loop?.every && !opts.noDue ? rchip('loop', i.loop.every <= 1 ? '↺ daily' : '↺ ~' + i.loop.every + 'd') : '') +
       (kids.length ? '<button class="rchip" data-steps>◉ ' + kids.filter(k => k.status === 'done').length + '/' + kids.length + '</button>' : '') +
+      (i.claimedBy ? '<span class="minichip claim">🙌 ' + esc(memberName(i.claimedBy)) + (i.claimedBy === state.profile ? ' (you)' : '') + '</span>' : '') +
       rchip('visibility', i.visibility === 'private' ? 'private' : 'shared') +
       (i.status === 'inbox' ? '<span class="minichip unsized">unsized</span>' : '') +
     '</span></span>' +
@@ -563,6 +624,7 @@ function openQuickEdit(id, field, anchor) {
   const i = getItem(id);
   if (!i) return;
   const wrap = $('#quickWrap'), pop = $('#quickPop');
+  pop.style.transform = ''; // clear any centring left by the snooze menu
   let title = field, options = [];
 
   if (field === 'category') {
@@ -794,7 +856,8 @@ function threadHtml(i) {
     const tag = m.kind === 'ask' ? '🙋 ' : m.kind === 'thanks' ? '❤️ ' : '';
     return '<div class="msg ' + (mine ? 'mine' : 'theirs') + '">' +
       (mine ? '' : '<span class="msg-who">' + esc(memberName(m.by)) + '</span>') +
-      '<span class="msg-text">' + tag + esc(m.text) + '</span></div>';
+      (m.photo ? '<img class="msg-photo" src="' + esc(m.photo) + '" alt="">' : '') +
+      (m.text ? '<span class="msg-text">' + tag + esc(m.text) + '</span>' : '') + '</div>';
   }).join('');
 }
 function messagesSection(i) {
@@ -802,8 +865,32 @@ function messagesSection(i) {
   return '<div class="group-head">message ' + who + '</div>' +
     '<div class="msg-thread" id="shThread">' + threadHtml(i) + '</div>' +
     '<div class="quickadd subadd"><input id="shMsgInput" placeholder="Message ' + who + '…" autocapitalize="sentences">' +
+      '<label class="chip" id="shMsgPhotoLbl" title="attach a photo">⊙<input id="shMsgPhoto" type="file" accept="image/*" hidden></label>' +
       '<button id="shMsgSend" class="chip">Send</button></div>' +
     '<button id="shAsk" class="chip big-chip ask-chip">🙋 Ask ' + who + ' to take this</button>';
+}
+
+// snooze picker: tonight / tomorrow / weekend, or wake now — reuses the
+// quick popover shell, centred on screen.
+function openSnoozeMenu(id) {
+  const at = (days, h) => { const d = new Date(); d.setDate(d.getDate() + days); d.setHours(h, 0, 0, 0); return d.getTime(); };
+  let tonight = at(0, 19); if (tonight < Date.now()) tonight = at(1, 19);
+  const satAdd = ((6 - new Date().getDay()) + 7) % 7 || 7;
+  const opts = [['Tonight', tonight], ['Tomorrow morning', at(1, 9)], ['This weekend', at(satAdd, 9)]];
+  const it = getItem(id);
+  const wrap = $('#quickWrap'), pop = $('#quickPop');
+  pop.innerHTML = '<div class="qe-head">Snooze until…</div><div class="qe-opts">' +
+    opts.map((o, k) => '<button class="chip" data-k="' + k + '">' + o[0] + '</button>').join('') +
+    (it && it.snoozeUntil ? '<button class="chip danger" data-clear>Wake now</button>' : '') + '</div>';
+  wrap.hidden = false;
+  pop.style.left = '50%'; pop.style.top = '42%'; pop.style.transform = 'translate(-50%,-50%)';
+  pop.querySelectorAll('[data-k]').forEach(b => b.onclick = () => {
+    snoozeItem(id, opts[+b.dataset.k][1]); wrap.hidden = true; $('#sheetWrap').hidden = true; changed();
+    showToast('Snoozed · ' + opts[+b.dataset.k][0].toLowerCase());
+  });
+  const cl = pop.querySelector('[data-clear]');
+  if (cl) cl.onclick = () => { snoozeItem(id, null); wrap.hidden = true; changed(); openSheet(id); };
+  $('#quickShade').onclick = () => { wrap.hidden = true; pop.style.transform = ''; };
 }
 
 export function openSheet(id) {
@@ -855,6 +942,14 @@ export function openSheet(id) {
     '</div>' +
     catChips +
     '<button id="shVis" class="chip big-chip">' + (i.visibility === 'private' ? 'Private — only me' : 'Shared with Ebbe & me') + '</button>' +
+    '<div class="sh-quick">' +
+      (i.visibility === 'shared' && otherUsers().length
+        ? '<button id="shClaim" class="chip' + (i.claimedBy ? ' on' : '') + '">' +
+          (i.claimedBy === state.profile ? '🙌 On it — release' : i.claimedBy ? '🙌 ' + esc(memberName(i.claimedBy)) + ' on it' : '🙌 I’m on it') + '</button>'
+        : '') +
+      '<button id="shDaily" class="chip' + (i.loop && i.loop.every <= 1 ? ' on' : '') + '">🔁 Daily chore</button>' +
+      '<button id="shSnooze" class="chip">😴 ' + (i.snoozeUntil ? 'Snoozed' : 'Snooze') + '</button>' +
+    '</div>' +
     (i.due ? '<a class="chip big-chip cal" target="_blank" rel="noopener" href="' + gcalUrl(i) + '">↗ Add to Google Calendar</a>' : '') +
     '<div class="group-head">magnitude · tap to resize</div>' +
     '<div class="dimrows">' + dimRows + '</div>' +
@@ -950,7 +1045,30 @@ export function openSheet(id) {
       changed();
       showToast('Asked ' + partnerName() + ' to take it');
     };
+    $('#shMsgPhoto').onchange = async (e) => {
+      const f = e.target.files[0]; if (!f) return;
+      try {
+        const dataUrl = await shrinkImage(f, 640);   // small so it syncs cheaply
+        addMessage(id, $('#shMsgInput').value.trim(), 'msg', dataUrl);
+        $('#shMsgInput').value = ''; refreshThread(); changed();
+      } catch { alert("Couldn't read that image."); }
+      e.target.value = '';
+    };
+    // "I'm on it" claim (release if it's already mine, else take it)
+    const claimBtn = $('#shClaim');
+    if (claimBtn) claimBtn.onclick = () => {
+      claimItem(id, getItem(id).claimedBy !== state.profile);
+      changed(); openSheet(id);
+    };
   }
+
+  // daily chore + snooze work on any item
+  $('#shDaily').onclick = () => {
+    const it = getItem(id);
+    setDailyChore(id, !(it.loop && it.loop.every <= 1));
+    changed(); openSheet(id);
+  };
+  $('#shSnooze').onclick = () => openSnoozeMenu(id);
 
   let visibility = i.visibility;
   $('#shVis').onclick = () => {

@@ -769,3 +769,40 @@ body.dump-focus #dumpText {
   min-height: 58vh; margin: 8px -18px 0; width: calc(100% + 36px);
   border-color: var(--coral); box-shadow: 0 14px 44px rgba(0,0,0,.18);
 }
+
+/* claim / daily / snooze */
+.minichip.claim { background: #DDF0E4; color: #1F8F68; font-weight: 700; }
+.snoozed-chip { background: #ECEAF6; color: #6C55C9; }
+.sh-quick { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 2px; }
+.sh-quick .chip { background: var(--card); box-shadow: 0 3px 0 var(--line); }
+.sh-quick .chip.on { background: var(--ink); color: #fff; box-shadow: 0 3px 0 rgba(0,0,0,.2); }
+#shMsgPhotoLbl { display: flex; align-items: center; }
+.msg-photo { display: block; max-width: 180px; width: 100%; border-radius: 12px; margin-bottom: 4px; }
+.news-card.claim { background: radial-gradient(120% 120% at 20% 10%, #fff, #DDF0E4 92%); box-shadow: 0 6px 16px rgba(47,191,143,.2); }
+.news-card.claim .nc-line b { color: #1F8F68; }
+
+/* once-a-day digest */
+#digestWrap { position: fixed; inset: 0; z-index: 58; }
+#digestShade { position: absolute; inset: 0; background: rgba(20,18,30,.5); backdrop-filter: blur(6px); }
+#digestCard {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
+  width: min(420px, calc(100vw - 28px)); max-height: 84vh; overflow-y: auto;
+  background: var(--paper); border-radius: 26px; padding: 22px 20px;
+  box-shadow: 0 20px 60px rgba(35,38,46,.35); animation: rise .28s ease-out;
+}
+.dg-greet {
+  font-family: var(--display); font-style: italic; font-weight: 600; font-size: 26px;
+  background: var(--hot); -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.dg-head { font-family: var(--text); text-transform: uppercase; letter-spacing: .14em; font-size: 11px; font-weight: 700; color: var(--faint); margin: 18px 0 8px; }
+.dg-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.dg-row:last-of-type { border-bottom: none; }
+.dg-title { flex: 1; font-weight: 600; }
+.dg-why { font-size: 11px; color: var(--coral-deep); font-weight: 700; white-space: nowrap; }
+.dg-row.done .dg-title { color: var(--muted); }
+.dg-check { color: #2FBF8F; font-weight: 800; }
+.dg-by { font-size: 11px; font-weight: 700; color: var(--lilac-deep); background: var(--lilac); border-radius: 999px; padding: 2px 8px; }
+.dg-load { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+.dg-load-item { background: var(--card); border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 600; box-shadow: 0 2px 0 var(--line); }
+.dg-load-item b { color: var(--lilac-deep); }
+#digestCard .primary.big { margin-top: 20px; }
