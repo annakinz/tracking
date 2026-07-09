@@ -634,7 +634,7 @@ function openQuickEdit(id, field, anchor) {
   } else if (field === 'visibility') {
     title = 'Visibility';
     options = [
-      { label: 'Shared with Ebbe & me', on: i.visibility !== 'private', apply: { visibility: 'shared' } },
+      { label: ('Shared with ' + partnerName() + ' & me'), on: i.visibility !== 'private', apply: { visibility: 'shared' } },
       { label: 'Private — only me', on: i.visibility === 'private', apply: { visibility: 'private' } },
     ];
   } else if (field === 'scope') {
@@ -941,7 +941,7 @@ export function openSheet(id) {
         (i.loop?.auto && i.loop?.every ? ' <span class="hint">(learned)</span>' : '') + '</label>' +
     '</div>' +
     catChips +
-    '<button id="shVis" class="chip big-chip">' + (i.visibility === 'private' ? 'Private — only me' : 'Shared with Ebbe & me') + '</button>' +
+    '<button id="shVis" class="chip big-chip">' + (i.visibility === 'private' ? 'Private — only me' : ('Shared with ' + partnerName() + ' & me')) + '</button>' +
     '<div class="sh-quick">' +
       (i.visibility === 'shared' && otherUsers().length
         ? '<button id="shClaim" class="chip' + (i.claimedBy ? ' on' : '') + '">' +
@@ -1073,7 +1073,7 @@ export function openSheet(id) {
   let visibility = i.visibility;
   $('#shVis').onclick = () => {
     visibility = visibility === 'private' ? 'shared' : 'private';
-    $('#shVis').textContent = visibility === 'private' ? 'Private — only me' : 'Shared with Ebbe & me';
+    $('#shVis').textContent = visibility === 'private' ? 'Private — only me' : ('Shared with ' + partnerName() + ' & me');
   };
 
   const commit = () => {
@@ -1148,8 +1148,8 @@ function syncSettingsHtml() {
     '<span class="hint" id="syStatus">last sync: ' + last + '</span></div>' +
     '<div class="setrow">' +
       (c.householdFileId
-        ? '<button id="syInvite" class="chip">Invite Ebbe (email)</button> <span class="hint">household connected</span>'
-        : '<button id="syCreate" class="chip">Create household</button> <button id="syJoin" class="chip">Join Ebbe’s</button>') +
+        ? '<button id="syInvite" class="chip">Invite ' + esc(partnerName()) + ' (email)</button> <span class="hint">household connected</span>'
+        : '<button id="syCreate" class="chip">Create household</button> <button id="syJoin" class="chip">Join ' + esc(partnerName()) + '’s</button>') +
     '</div>' +
     '<label class="toggle" style="padding:6px 0"><input type="checkbox" id="syPriv"' + (c.privateBackup !== false ? ' checked' : '') + '> back up my private items to my own Drive</label>' +
     '<p class="hint">Shared items sync to a household file both of you can read; private items back up only to your own Drive. Set up a free Google Cloud project (client ID + API key) — see the chat instructions.</p>'
@@ -1171,9 +1171,9 @@ function wireSyncSettings() {
     catch (err) { btn.textContent = was; btn.disabled = false; alert('Google sign-in failed: ' + err.message); }
   };
   $('#sySyncNow').onclick = async () => { await gsync.syncNow(); renderSettings(); };
-  const cr = $('#syCreate'); if (cr) cr.onclick = async () => { try { await gsync.createHousehold(); await gsync.syncNow(); renderSettings(); alert('Household created — now Invite Ebbe.'); } catch (e) { alert(e.message); } };
+  const cr = $('#syCreate'); if (cr) cr.onclick = async () => { try { await gsync.createHousehold(); await gsync.syncNow(); renderSettings(); alert('Household created — now Invite ' + partnerName() + '.'); } catch (e) { alert(e.message); } };
   const jn = $('#syJoin'); if (jn) jn.onclick = async () => { try { const id = await gsync.joinHousehold(); if (id) { await gsync.syncNow(); renderSettings(); } } catch (e) { alert(e.message); } };
-  const iv = $('#syInvite'); if (iv) iv.onclick = async () => { const em = prompt('Ebbe’s Google email:'); if (em) { try { await gsync.invite(em.trim()); alert('Invited ' + em); } catch (e) { alert(e.message); } } };
+  const iv = $('#syInvite'); if (iv) iv.onclick = async () => { const em = prompt(partnerName() + '’s Google email:'); if (em) { try { await gsync.invite(em.trim()); alert('Invited ' + em); } catch (e) { alert(e.message); } } };
 }
 
 // ---------- sheet helpers ----------
