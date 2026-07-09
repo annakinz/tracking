@@ -307,17 +307,20 @@ select {
   box-shadow: 0 10px 34px rgba(35,38,46,.28), 0 3px 0 var(--line);
   will-change: transform;
 }
-#peekCard.morph { animation: peekMorph .28s cubic-bezier(.2,1.05,.4,1); }
-#peekCard.morph > * { animation: peekFill .28s ease-out both; }
+#peekCard.morph { animation: peekMorph .3s cubic-bezier(.2,1.05,.4,1); }
+#peekCard.morph > * { animation: peekFill .3s ease-out both; }
 @keyframes peekMorph {
-  from { transform: scale(.14); border-radius: 50%; background: var(--morph-from, var(--card)); }
-  55%  { border-radius: 30px; }
-  to   { transform: scale(1); border-radius: 16px; background: var(--card); }
+  from { transform: scale(.14); border-radius: 50%; }
+  55%  { border-radius: 34px; }
+  to   { transform: scale(1); border-radius: 16px; }
 }
 @keyframes peekFill {
-  0%, 35% { opacity: 0; }
+  0%, 38% { opacity: 0; }
   100% { opacity: 1; }
 }
+/* the card wears the bubble's colour, so its title reads darker for contrast */
+#peekCard .peek-title { color: var(--ink); }
+#peekCard .peek-chip { background: rgba(255,255,255,.82); }
 .peek-title { font-family: var(--display); font-weight: 640; font-size: 16px; line-height: 1.25; }
 .peek-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
 .peek-chip {
