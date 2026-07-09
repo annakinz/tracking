@@ -10,7 +10,7 @@ import {
 import { parseDump, classifyOne } from './classify.js';
 import { agentClassify, agentPhotoTasks, getKey, setKey } from './agent.js';
 import { openSizer } from './bubbles.js';
-import * as gsync from './gsync.js';
+import * as hsync from './hsync.js';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
@@ -1138,64 +1138,43 @@ export function openSheet(id) {
 
 function syncSettingsHtml() {
   const c = state.sync || (state.sync = {});
-  const connected = gsync.isSignedIn();
-  const last = c.lastSync ? new Date(c.lastSync).toLocaleTimeString() : 'never';
   return (
-    '<label class="famrow"><input id="syClient" placeholder="Google client ID (…apps.googleusercontent.com)" value="' + esc(c.clientId || '') + '"></label>' +
-    '<label class="famrow"><input id="syKey" placeholder="Google API key (for joining a shared household)" value="' + esc(c.apiKey || '') + '"></label>' +
-    '<div class="setrow"><button id="syConnect" class="chip">' + (connected ? '✓ Connected' : 'Connect Google') + '</button>' +
-    '<button id="sySyncNow" class="chip">Sync now</button>' +
-    '<span class="hint" id="syStatus">last sync: ' + last + '</span></div>' +
+    '<label class="famrow"><input id="syUrl" placeholder="Sync script URL (…/exec)" value="' + esc(c.gasUrl || '') + '" autocapitalize="none" autocorrect="off"></label>' +
+    '<label class="famrow"><input id="syCode" placeholder="Household code (same on both phones)" value="' + esc(c.code || '') + '" autocapitalize="characters" autocorrect="off"></label>' +
     '<div class="setrow">' +
-      (c.householdFileId
-        ? '<button id="syInvite" class="chip">Invite ' + esc(partnerName()) + ' (email)</button> <button id="syLeave" class="chip danger">Leave / re-join</button>'
-        : '<button id="syCreate" class="chip">Create household</button> <button id="syJoin" class="chip">Join ' + esc(partnerName()) + '’s</button>') +
-    '</div>' +
+      '<button id="syGen" class="chip">Generate code</button>' +
+      '<button id="sySyncNow" class="chip">Sync now</button>' +
+      '<span class="hint" id="syStatus"></span></div>' +
     '<p class="hint' + (c.lastError ? ' sync-err' : '') + '" id="syDiag">' + syncDiag(c) + '</p>' +
-    '<p class="hint">If sign-in says <b>redirect_uri_mismatch</b>: in Google Cloud → Credentials → your OAuth client → <b>Authorized redirect URIs</b>, add this exact URL:<br><b>' + esc(gsync.redirectUri()) + '</b></p>' +
-    '<label class="toggle" style="padding:6px 0"><input type="checkbox" id="syPriv"' + (c.privateBackup !== false ? ' checked' : '') + '> back up my private items to my own Drive</label>' +
-    '<p class="hint">Shared items sync to a household file both of you can read; private items back up only to your own Drive. Set up a free Google Cloud project (client ID + API key) — see the chat instructions.</p>'
+    '<p class="hint">No sign-in. A tiny Google Apps Script (runs as you, stores an <b>encrypted</b> file in <b>your</b> Drive) does the sync — see <b>apps-script.gs</b> in the repo for the 5-minute setup. Paste its <b>/exec</b> URL above, pick a household code, and use the <b>same code</b> on both phones. Your data is encrypted with that code before it leaves the phone.</p>'
   );
 }
 
-// A one-line health readout so both phones can be compared: the household
-// file id (last 6 chars — must MATCH on both devices), how many shared items
-// this phone last pushed, and the last error if any.
+// One-line health readout: shared items pushed, last sync, and any error.
 function syncDiag(c) {
   if (c.lastError) return '⚠ ' + esc(c.lastError);
   const parts = [];
-  if (c.householdFileId) parts.push('file …' + esc(String(c.householdFileId).slice(-6)));
-  if (typeof c.lastSharedCount === 'number') parts.push(c.lastSharedCount + ' shared items pushed');
+  if (typeof c.peerCount === 'number') parts.push(c.peerCount === 0 ? '0 other devices — check the code matches' : c.peerCount + ' other device' + (c.peerCount > 1 ? 's' : '') + ' linked');
+  if (typeof c.lastSharedCount === 'number') parts.push(c.lastSharedCount + ' shared items');
   if (c.lastSync) parts.push('synced ' + new Date(c.lastSync).toLocaleTimeString());
-  return parts.length ? parts.join(' · ') : 'not synced yet — tap Sync now';
+  return parts.length ? parts.join(' · ') : (c.gasUrl && c.code ? 'ready — tap Sync now' : 'not set up yet');
 }
 
 function wireSyncSettings() {
   const c = state.sync || (state.sync = {});
-  if (c.clientId) gsync.preloadLibs(); // warm Google's scripts before the tap
   const setStatus = (s) => { const el = $('#syStatus'); if (el) el.textContent = s; };
-  gsync.onSyncStatus((s) => setStatus(s === 'ok' ? 'synced ' + new Date().toLocaleTimeString() : s === 'syncing' ? 'syncing…' : s.startsWith('error') ? s.slice(6) : s));
-  $('#syClient').onchange = (e) => { c.clientId = e.target.value.trim(); save(); };
-  $('#syKey').onchange = (e) => { c.apiKey = e.target.value.trim(); save(); };
-  $('#syPriv').onchange = (e) => { c.privateBackup = e.target.checked; save(); };
-  $('#syConnect').onclick = async (e) => {
-    const btn = e.currentTarget; const was = btn.textContent;
-    btn.textContent = 'Connecting…'; btn.disabled = true;
-    try { await gsync.connect(); renderSettings(); }
-    catch (err) { btn.textContent = was; btn.disabled = false; alert('Google sign-in failed: ' + err.message); }
-  };
+  hsync.onSyncStatus((s) => setStatus(s === 'ok' ? 'synced ' + new Date().toLocaleTimeString() : s === 'syncing' ? 'syncing…' : s.startsWith('error') ? s.slice(6) : s));
+  $('#syUrl').onchange = (e) => { c.gasUrl = e.target.value.trim(); save(); };
+  $('#syCode').onchange = (e) => { c.code = e.target.value.trim(); save(); };
+  $('#syGen').onclick = () => { c.code = hsync.makeCode(); save(); renderSettings(); };
   $('#sySyncNow').onclick = async () => {
-    await gsync.syncNow();
+    if (!hsync.syncConfigured()) { alert('Add the sync script URL and a household code first.'); return; }
+    await hsync.syncNow();
     renderSettings();
     const s = state.sync || {};
-    alert(s.lastError
-      ? 'Sync problem: ' + s.lastError
-      : 'Synced ✓\n' + (s.lastSharedCount || 0) + ' shared items pushed to the household file (…' + String(s.householdFileId || '').slice(-6) + ').');
+    alert(s.lastError ? 'Sync problem: ' + s.lastError
+      : 'Synced ✓ — ' + (s.lastSharedCount || 0) + ' shared items.');
   };
-  const cr = $('#syCreate'); if (cr) cr.onclick = async () => { try { await gsync.createHousehold(); await gsync.syncNow(); renderSettings(); alert('Household created — now Invite ' + partnerName() + '.'); } catch (e) { alert(e.message); } };
-  const jn = $('#syJoin'); if (jn) jn.onclick = async () => { try { const id = await gsync.joinHousehold(); if (id) { await gsync.syncNow(); renderSettings(); } } catch (e) { alert(e.message); } };
-  const iv = $('#syInvite'); if (iv) iv.onclick = async () => { const em = prompt(partnerName() + '’s Google email:'); if (em) { try { await gsync.invite(em.trim()); alert('Invited ' + em + ' — they can now Join / re-join.'); } catch (e) { alert('Invite failed: ' + e.message); } } };
-  const lv = $('#syLeave'); if (lv) lv.onclick = () => { if (confirm('Leave this household file? Your items stay on this phone — you can Join again after being invited.')) { gsync.leaveHousehold(); renderSettings(); } };
 }
 
 // ---------- sheet helpers ----------
@@ -1355,7 +1334,7 @@ export function renderSettings() {
     '<div class="group-head">link previews</div>' +
     '<label class="toggle" style="padding:6px 0"><input type="checkbox" id="setLinkPrev"' + (state.linkPreviews ? ' checked' : '') + '> fetch titles &amp; preview images for links in notes</label>' +
     '<p class="hint">Off by default. When on, a link you paste is sent to a preview service (microlink.io) to fetch its title and image; the result is cached and shared with your household. Leave off to keep link URLs private — cards still show the site icon and name.</p>' +
-    '<div class="group-head">sync · google drive</div>' + syncSettingsHtml() +
+    '<div class="group-head">sync · household</div>' + syncSettingsHtml() +
     '<div class="group-head">data</div>' +
     '<div class="setrow"><button id="setExport" class="chip">Export JSON</button> ' +
     '<label class="chip">Import <input type="file" id="setImport" accept=".json" hidden></label> ' +
