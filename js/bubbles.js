@@ -89,6 +89,7 @@ function uniDiam(u) { // wide exponential: the biggest is ~8× the smallest
 }
 
 function renderUniverse() {
+  stopSettle();
   const field = els.uniField;
   field.innerHTML = '';
   const W = field.clientWidth || 360, H = field.clientHeight || 600;
@@ -119,7 +120,10 @@ function renderUniverse() {
   for (const nd of uniNodes) { nd.el = uniBubble(nd); field.appendChild(nd.el); }
 }
 
-function relaxUniverse(iters) {
+// one round of decluttering: push overlapping bubbles apart, then clamp to
+// the field. No vertical spring here — callers decide how hard to pull toward
+// priority height (instant for layout, slow for the post-flick ride home).
+function collide(iters) {
   const W = uniW, H = uniH, PAD = 10, nodes = uniNodes;
   for (let iter = 0; iter < iters; iter++) {
     for (let a = 0; a < nodes.length; a++) {
@@ -135,12 +139,41 @@ function relaxUniverse(iters) {
       }
     }
     for (const nd of nodes) {
-      nd.y += (nd.targetY - nd.y) * 0.08;              // spring toward priority height
       nd.x = Math.max(nd.r + 2, Math.min(W - nd.r - 2, nd.x));
       nd.y = Math.max(nd.r + 6, Math.min(H - nd.r - 46, nd.y));
     }
   }
 }
+
+// initial layout: collide + a firm spring so every bubble reaches its
+// priority height right away.
+function relaxUniverse(iters) {
+  for (let iter = 0; iter < iters; iter++) {
+    collide(1);
+    for (const nd of uniNodes) nd.y += (nd.targetY - nd.y) * 0.08;
+  }
+  collide(1);
+}
+
+// After a flick the bubble sits where it was thrown, then slowly rides back
+// up to its true priority height while its neighbours keep out of the way —
+// the layout heals itself instead of snapping. Runs until everything settles.
+let settleRAF = null;
+function startSettle() {
+  if (settleRAF) return;
+  const tick = () => {
+    collide(4);
+    let moving = false;
+    for (const nd of uniNodes) {
+      const dy = nd.targetY - nd.y;
+      if (Math.abs(dy) > 0.5) { nd.y += dy * 0.02; moving = true; } // gentle climb home
+    }
+    layoutUniverse();
+    settleRAF = moving ? requestAnimationFrame(tick) : null;
+  };
+  settleRAF = requestAnimationFrame(tick);
+}
+function stopSettle() { if (settleRAF) { cancelAnimationFrame(settleRAF); settleRAF = null; } }
 
 function layoutUniverse() {
   for (const nd of uniNodes) {
@@ -150,15 +183,21 @@ function layoutUniverse() {
   }
 }
 
+// the bubble's fill — shared with the peek card so the card is literally the
+// bubble grown large (same category-tinted radial gradient, no paper)
+function bubbleBg(cat) {
+  const sw = catColor(cat);
+  return 'radial-gradient(circle at 34% 30%, #ffffff, ' + sw + 'cc 72%, ' + sw + ')';
+}
+
 function uniBubble(nd) {
   const it = nd.it, size = nd.size;
-  const sw = catColor(it.category);
   const b = document.createElement('div');
   b.className = 'uni-bubble' + (nd.isUnsized ? ' unsized' : '');
   b.style.width = b.style.height = size + 'px';
   b.style.left = (nd.x - nd.r) + 'px';
   b.style.top = (nd.y - nd.r) + 'px';
-  b.style.background = 'radial-gradient(circle at 34% 30%, #ffffff, ' + sw + 'cc 72%, ' + sw + ')';
+  b.style.background = bubbleBg(it.category);
   // text scales with the bubble, all the way down to tiny on the small ones
   b.innerHTML = '<span></span>';
   const span = b.querySelector('span');
@@ -205,18 +244,17 @@ function attachUniGestures(b, nd) {
 
 function editItem(id) { document.dispatchEvent(new CustomEvent('stratos:edit', { detail: id })); }
 
-// flick: throw the bubble in the flick direction and let it STAY there.
-// The distance scales with how hard you flicked. Crucially we move its
-// target height to where it lands, otherwise the relaxation spring would
-// yank it straight back to its priority row and the flick would feel dead.
+// flick: throw the bubble in the flick direction (distance scales with how
+// hard you flicked), shove its neighbours aside, then let it slowly ride back
+// up to its priority height. targetY is left untouched — that's its true home.
 function nudgeNode(nd, dx, dy) {
   const m = Math.hypot(dx, dy) || 1;
   const push = Math.min(180, Math.max(80, m * 1.5));
   nd.x = Math.max(nd.r + 2, Math.min(uniW - nd.r - 2, nd.x + dx / m * push));
   nd.y = Math.max(nd.r + 6, Math.min(uniH - nd.r - 46, nd.y + dy / m * push));
-  nd.targetY = nd.y;          // settle where flicked, don't spring home
-  relaxUniverse(36);          // just enough to nudge neighbours out of the way
+  collide(10);                // clear space around where it landed, now
   layoutUniverse();
+  startSettle();              // …then it climbs home over the next few seconds
   if (navigator.vibrate) navigator.vibrate(9);
 }
 
@@ -256,9 +294,10 @@ function peekBubble(nd) {
     '<div class="peek-chips">' + chipHtml + '</div>' +
     '<div class="peek-actions"><button data-resize>◯ resize</button>' +
     '<button data-edit>✎ edit</button></div>';
+  card.style.background = bubbleBg(it.category);        // the card IS the bubble
   els.peekWrap.hidden = false;
   positionNear(card, nd.el);
-  morphFromBubble(card, nd.el, catColor(it.category));  // the bubble grows into the card
+  morphFromBubble(card, nd.el);                         // …grown large from where you tapped
   card.querySelector('[data-resize]').onclick = () => { els.peekWrap.hidden = true; sizeOne(it.id); };
   card.querySelector('[data-edit]').onclick = () => { els.peekWrap.hidden = true; editItem(it.id); };
   els.peekShade.onclick = () => { els.peekWrap.hidden = true; };
@@ -278,10 +317,9 @@ function positionNear(card, anchor) {
 // morph: the card scales up out of the tapped bubble — origin pinned to the
 // bubble's centre, starting as a small disc in its category colour, opening
 // into the full card. Reads as the bubble itself unfolding.
-function morphFromBubble(card, anchor, color) {
+function morphFromBubble(card, anchor) {
   const a = anchor.getBoundingClientRect();
   const c = card.getBoundingClientRect();
-  card.style.setProperty('--morph-from', color);
   card.style.transformOrigin =
     (a.left + a.width / 2 - c.left) + 'px ' + (a.top + a.height / 2 - c.top) + 'px';
   card.classList.remove('morph');
