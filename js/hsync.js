@@ -20,8 +20,12 @@ const te = new TextEncoder(), td = new TextDecoder();
 function b64(buf) { let s = ''; const b = new Uint8Array(buf); for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s); }
 function unb64(str) { const s = atob(str); const b = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i); return b; }
 
+// normalize so "abcd-efgh", "ABCD EFGH", "ABCDEFGH" all mean the same
+// household — a mismatched-looking code is the #1 way two phones miss each other
+function normCode(code) { return String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }
+
 async function keyFromCode(code) {
-  const base = await crypto.subtle.importKey('raw', te.encode(code), 'PBKDF2', false, ['deriveKey']);
+  const base = await crypto.subtle.importKey('raw', te.encode(normCode(code)), 'PBKDF2', false, ['deriveKey']);
   return crypto.subtle.deriveKey(
     { name: 'PBKDF2', salt: te.encode('stratos.household.v1'), iterations: 120000, hash: 'SHA-256' },
     base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
@@ -44,7 +48,7 @@ async function decryptJSON(code, blob) {
 // a non-secret id for the household so the script can key the file without
 // knowing the code (the code stays on the phones as the encryption key)
 async function householdId(code) {
-  const h = await crypto.subtle.digest('SHA-256', te.encode('stratos.hh.' + code));
+  const h = await crypto.subtle.digest('SHA-256', te.encode('stratos.hh.' + normCode(code)));
   return b64(h).replace(/[^a-zA-Z0-9]/g, '').slice(0, 24);
 }
 function deviceId() {

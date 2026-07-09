@@ -1173,7 +1173,8 @@ function wireSyncSettings() {
     renderSettings();
     const s = state.sync || {};
     alert(s.lastError ? 'Sync problem: ' + s.lastError
-      : 'Synced ✓ — ' + (s.lastSharedCount || 0) + ' shared items.');
+      : 'Synced ✓\n' + (s.peerCount ? s.peerCount + ' other device' + (s.peerCount > 1 ? 's' : '') + ' linked' : '0 other devices linked yet — make sure the OTHER phone has the same code + URL and has tapped Sync now')
+        + '\n' + (s.lastSharedCount || 0) + ' shared items here.');
   };
 }
 
