@@ -4,7 +4,7 @@ const DB_KEY = 'stratos.v1';
 
 // Build number — bump together with the service-worker CACHE in sw.js on
 // every deploy. Shown in Settings so you can confirm your phone is current.
-export const BUILD = '40';
+export const BUILD = '41';
 
 export const DIM_ORDER = ['priority', 'effort', 'difficulty', 'dread', 'restock'];
 
@@ -509,7 +509,13 @@ export function applySync(kind, remote) {
   for (const [id, ts] of Object.entries(remote.deleted || {})) {
     if (!tomb[id] || ts > tomb[id]) tomb[id] = ts;
     const local = getItem(id);
-    if (local && (local.updatedAt || 0) <= ts) {
+    // Only ever delete an item that still belongs to THIS file's visibility.
+    // Crucial: a shared-file tombstone must NOT delete a now-private item — if
+    // you unshared something to keep it personal, its id is in the shared
+    // tombstones, and without this guard an incoming delete would wipe your
+    // private copy. Same protection the other way for the private file.
+    const wantVis = kind === 'private' ? 'private' : 'shared';
+    if (local && local.visibility === wantVis && (local.updatedAt || 0) <= ts) {
       state.items = state.items.filter(x => x.id !== id);
       changed = true;
     }
