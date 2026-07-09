@@ -303,14 +303,17 @@ function peekBubble(nd) {
   els.peekShade.onclick = () => { els.peekWrap.hidden = true; };
 }
 
+// centre the card ON TOP of the tapped bubble (it grows out from there), then
+// clamp it into the viewport. The dimmed backdrop keeps focus on just this.
 function positionNear(card, anchor) {
-  const pw = Math.min(260, window.innerWidth - 16);
+  const pw = Math.min(300, window.innerWidth - 28);
   card.style.width = pw + 'px'; card.style.left = '0px'; card.style.top = '0px';
   const a = anchor.getBoundingClientRect();
   const ph = card.offsetHeight;
-  const left = Math.min(Math.max(8, a.left + a.width / 2 - pw / 2), window.innerWidth - pw - 8);
-  let top = a.bottom + 8;
-  if (top + ph > window.innerHeight - 74) top = Math.max(8, a.top - ph - 8);
+  const cx = a.left + a.width / 2, cy = a.top + a.height / 2;
+  const left = Math.min(Math.max(10, cx - pw / 2), window.innerWidth - pw - 10);
+  const topMin = 68, topMax = Math.max(topMin, window.innerHeight - 88 - ph);
+  const top = Math.min(Math.max(topMin, cy - ph / 2), topMax);
   card.style.left = left + 'px'; card.style.top = top + 'px';
 }
 

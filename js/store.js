@@ -4,7 +4,7 @@ const DB_KEY = 'stratos.v1';
 
 // Build number — bump together with the service-worker CACHE in sw.js on
 // every deploy. Shown in Settings so you can confirm your phone is current.
-export const BUILD = '28';
+export const BUILD = '29';
 
 export const DIM_ORDER = ['priority', 'effort', 'difficulty', 'dread', 'restock'];
 
@@ -216,6 +216,20 @@ export function attachDoneNote(id, note) {
   save();
 }
 
+// A little message thread lives on each shared item. Adding one bumps
+// updatedAt so it syncs; the other person's copy surfaces it as news.
+// kind: 'msg' (plain), 'ask' (please take this), 'thanks' (a heart back).
+export function addMessage(id, text, kind = 'msg') {
+  const item = getItem(id);
+  if (!item) return;
+  const t = String(text || '').trim();
+  if (!t) return item;
+  (item.messages || (item.messages = [])).push({ id: uid(), by: state.profile, text: t, kind, at: Date.now() });
+  touch(item);
+  save();
+  return item;
+}
+
 // ---------- strata math ----------
 
 // continuous magnitude: stratumIndex + frac, or null if unsized
@@ -401,6 +415,16 @@ function detectNews(it, prevStatus, seeding) {
   }
 }
 
+// Surface messages the other person left on a shared item (on any item,
+// including ones I created — so a reply on my own task still pings me).
+function scanMessages(it, seeding) {
+  const me = state.profile;
+  for (const m of it.messages || []) {
+    if (!m || m.by === me) continue;
+    pushNews({ itemId: it.id, kind: 'message', subkind: m.kind || 'msg', by: m.by, title: it.title, note: m.text || '', at: m.at || 0 }, seeding);
+  }
+}
+
 // Merge a downloaded file into local state; returns true if anything changed.
 export function applySync(kind, remote) {
   if (!remote || typeof remote !== 'object') return false;
@@ -422,13 +446,13 @@ export function applySync(kind, remote) {
     const local = getItem(it.id);
     if (!local) {
       state.items.push({ ...it, media: [] }); changed = true;
-      if (watch) detectNews(it, undefined, seeding);
+      if (watch) { detectNews(it, undefined, seeding); scanMessages(it, seeding); }
     } else if ((it.updatedAt || 0) > (local.updatedAt || 0)) {
       const prev = local.status;
       const idx = state.items.findIndex(x => x.id === it.id);
       state.items[idx] = { ...it, media: local.media || [] }; // keep local photos
       changed = true;
-      if (watch) detectNews(it, prev, seeding);
+      if (watch) { detectNews(it, prev, seeding); scanMessages(it, seeding); }
     }
   }
   // prune tombstones + seen-news keys older than 90 days so the maps don't grow

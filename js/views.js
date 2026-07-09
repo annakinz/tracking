@@ -1,7 +1,7 @@
 // List / dump / house / settings / detail-sheet rendering.
 
 import {
-  state, save, uid, addItem, getItem, updateItem, deleteItem, markDone, attachDoneNote,
+  state, save, uid, addItem, getItem, updateItem, deleteItem, markDone, attachDoneNote, addMessage,
   uOf, effectivePriority, gravityBoost, effDueISO, memberName, visibleTo,
   inboxItems, childrenOf, exportJSON, importJSON, resetAll, DIM_ORDER, BUILD,
   newsItems, reviewNews, clearNews, otherUsers, partnerName,
@@ -211,17 +211,31 @@ function openNews() {
   const list = $('#newsList');
   list.innerHTML = '';
   for (const ev of items) {
-    const who = memberName(ev.by);
+    const who = esc(memberName(ev.by));
+    const sub = ev.kind === 'message' ? (ev.subkind || 'msg') : ev.kind;
+    let line;
+    if (sub === 'done') line = '<b>' + who + '</b> finished';
+    else if (sub === 'added') line = '<b>' + who + '</b> added';
+    else if (sub === 'ask') line = '<b>' + who + '</b> asked you to take';
+    else if (sub === 'thanks') line = '<b>' + who + '</b> sent you';
+    else line = '<b>' + who + '</b> messaged about';
+    const showHeart = sub === 'done';                    // react to a completion
     const card = document.createElement('div');
-    card.className = 'news-card ' + ev.kind;
+    card.className = 'news-card ' + sub;
     card.innerHTML =
       '<div class="nc-body">' +
-        '<div class="nc-line"><b>' + esc(who) + '</b> ' + (ev.kind === 'done' ? 'finished' : 'added') + '</div>' +
+        '<div class="nc-line">' + line + '</div>' +
         '<div class="nc-title">' + esc(ev.title) + '</div>' +
-        (ev.note ? '<div class="nc-note">“' + esc(ev.note) + '”</div>' : '') +
+        (ev.note ? '<div class="nc-note">' + (sub === 'thanks' ? '' : '“') + esc(ev.note) + (sub === 'thanks' ? '' : '”') + '</div>' : '') +
       '</div>' +
+      (showHeart ? '<button class="nc-heart" title="say thanks">♥</button>' : '') +
       '<button class="nc-pop" title="reviewed">✓</button>';
     card.querySelector('.nc-pop').onclick = () => popNews(card, ev.key);
+    const heart = card.querySelector('.nc-heart');
+    if (heart) heart.onclick = () => {
+      if (getItem(ev.itemId)) { addMessage(ev.itemId, 'thanks!', 'thanks'); changed(); showToast('❤ sent to ' + memberName(ev.by)); }
+      popNews(card, ev.key);
+    };
     card.querySelector('.nc-body').onclick = () => {
       if (getItem(ev.itemId)) { $('#newsWrap').hidden = true; openSheet(ev.itemId); }
     };
@@ -246,6 +260,13 @@ function popNews(card, key) {
 
 export function initDump() {
   const btn = $('#dumpBtn');
+
+  // focus mode: tapping into the dump box expands it and fades the rest of
+  // the world away, so a brain dump is the only thing in front of you
+  const ta = $('#dumpText');
+  ta.addEventListener('focus', () => document.body.classList.add('dump-focus'));
+  ta.addEventListener('blur', () => document.body.classList.remove('dump-focus'));
+
   btn.addEventListener('click', async () => {
     const text = $('#dumpText').value;
     if (!text.trim()) return;
@@ -764,6 +785,27 @@ export function openBubble(id) {
 
 // ---------- DETAIL SHEET ----------
 
+// the little message thread that shows on shared items
+function threadHtml(i) {
+  const ms = i.messages || [];
+  if (!ms.length) return '<div class="msg-empty">No messages yet — say hi 👋</div>';
+  return ms.map(m => {
+    const mine = m.by === state.profile;
+    const tag = m.kind === 'ask' ? '🙋 ' : m.kind === 'thanks' ? '❤️ ' : '';
+    return '<div class="msg ' + (mine ? 'mine' : 'theirs') + '">' +
+      (mine ? '' : '<span class="msg-who">' + esc(memberName(m.by)) + '</span>') +
+      '<span class="msg-text">' + tag + esc(m.text) + '</span></div>';
+  }).join('');
+}
+function messagesSection(i) {
+  const who = esc(partnerName());
+  return '<div class="group-head">message ' + who + '</div>' +
+    '<div class="msg-thread" id="shThread">' + threadHtml(i) + '</div>' +
+    '<div class="quickadd subadd"><input id="shMsgInput" placeholder="Message ' + who + '…" autocapitalize="sentences">' +
+      '<button id="shMsgSend" class="chip">Send</button></div>' +
+    '<button id="shAsk" class="chip big-chip ask-chip">🙋 Ask ' + who + ' to take this</button>';
+}
+
 export function openSheet(id) {
   const i = getItem(id);
   if (!i) return;
@@ -818,7 +860,8 @@ export function openSheet(id) {
     '<div class="dimrows">' + dimRows + '</div>' +
     '<div class="group-head">notes</div>' +
     '<textarea id="shNotes" placeholder="Notes, links, anything — paste a URL and it becomes a chip below">' + esc(i.notes || '') + '</textarea>' +
-    '<div id="shLinks" class="linkrow">' + linkChips(i.notes) + '</div>' +
+    '<div id="shLinks" class="linkrow"></div>' +
+    (i.visibility === 'shared' && otherUsers().length ? messagesSection(i) : '') +
     '<div class="group-head">photos</div>' +
     '<div class="mediagrid" id="shMedia"></div>' +
     '<label class="chip addphoto">⊙ Add photo<input type="file" id="shPhoto" accept="image/*" hidden></label>' +
@@ -839,9 +882,16 @@ export function openSheet(id) {
     };
   });
 
-  // live link chips as you type/paste
+  // live link cards as you type/paste; enrich (title + preview image) once
+  // you finish the note (on blur), if link previews are turned on in settings
+  renderLinks($('#shLinks'), i.notes, i);
   $('#shNotes').addEventListener('input', () => {
-    $('#shLinks').innerHTML = linkChips($('#shNotes').value);
+    renderLinks($('#shLinks'), $('#shNotes').value, getItem(id));
+  });
+  $('#shNotes').addEventListener('blur', () => {
+    const it = getItem(id); if (!it) return;
+    it.notes = $('#shNotes').value; save();
+    enrichLinks(it, () => renderLinks($('#shLinks'), it.notes, it));
   });
 
   renderSheetMedia(i);
@@ -877,6 +927,30 @@ export function openSheet(id) {
   };
   $('#shSubAdd').onclick = addStep;
   $('#shSubInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') addStep(); });
+
+  // message thread with the other person (shared items only)
+  if (i.visibility === 'shared' && otherUsers().length) {
+    const refreshThread = () => {
+      const el = $('#shThread');
+      if (el) { el.innerHTML = threadHtml(getItem(id)); el.scrollTop = el.scrollHeight; }
+    };
+    const send = () => {
+      const t = $('#shMsgInput').value.trim();
+      if (!t) return;
+      addMessage(id, t, 'msg');
+      $('#shMsgInput').value = '';
+      refreshThread();
+      changed();
+    };
+    $('#shMsgSend').onclick = send;
+    $('#shMsgInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+    $('#shAsk').onclick = () => {
+      addMessage(id, 'Can you take this one?', 'ask');
+      refreshThread();
+      changed();
+      showToast('Asked ' + partnerName() + ' to take it');
+    };
+  }
 
   let visibility = i.visibility;
   $('#shVis').onclick = () => {
@@ -994,13 +1068,69 @@ function gcalUrl(i) {
   return 'https://calendar.google.com/calendar/render?' + p.toString();
 }
 
-function linkChips(notes) {
-  const urls = (notes || '').match(/https?:\/\/[^\s)>\]]+/g) || [];
-  return [...new Set(urls)].map(u => {
-    let host = u;
-    try { host = new URL(u).hostname.replace(/^www\./, ''); } catch { /* keep raw */ }
-    return '<a class="minichip link" href="' + esc(u) + '" target="_blank" rel="noopener">🔗 ' + esc(host) + '</a>';
-  }).join('');
+// ---------- rich link cards ----------
+const URL_RE = /https?:\/\/[^\s)>\]]+/g;
+const linkUrls = (notes) => [...new Set((notes || '').match(URL_RE) || [])].slice(0, 3); // 2–3 chips
+
+function linkHost(u) { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return u; } }
+function linkPretty(u) {
+  try {
+    const url = new URL(u);
+    let seg = decodeURIComponent(url.pathname).split('/').filter(Boolean).pop() || '';
+    seg = seg.replace(/\.[a-z0-9]{1,5}$/i, '').replace(/[-_+]+/g, ' ').trim();
+    return seg && seg.length > 1 ? seg.replace(/\b\w/g, c => c.toUpperCase()) : '';
+  } catch { return ''; }
+}
+const favicon = (host) => 'https://www.google.com/s2/favicons?domain=' + encodeURIComponent(host) + '&sz=64';
+
+// one row-sized card: preview image (or favicon) + title + subtitle
+function linkCardHtml(u, meta) {
+  const host = linkHost(u);
+  const title = (meta && meta.title) || linkPretty(u) || host;
+  const sub = (meta && meta.desc) || (title === host ? u.replace(/^https?:\/\//, '') : host);
+  const letter = esc((host[0] || '?').toUpperCase());
+  const thumb = meta && meta.image
+    ? '<span class="lc-thumb" style="background-image:url(' + esc(JSON.stringify(meta.image)) + ')"></span>'
+    : '<span class="lc-fav" data-letter="' + letter + '"><img src="' + esc(favicon(host)) + '" alt=""></span>';
+  return '<a class="link-card" href="' + esc(u) + '" target="_blank" rel="noopener">' + thumb +
+    '<span class="lc-text"><span class="lc-title">' + esc(title) + '</span>' +
+    '<span class="lc-sub">' + esc(sub) + '</span></span><span class="lc-go">↗</span></a>';
+}
+
+// render the cards into a container; wire favicon fallback (letter badge)
+function renderLinks(container, notes, item) {
+  const urls = linkUrls(notes);
+  const meta = (item && item.linkMeta) || {};
+  container.innerHTML = urls.map(u => linkCardHtml(u, meta[u])).join('');
+  container.querySelectorAll('.lc-fav img').forEach(img => {
+    img.onerror = () => { img.style.display = 'none'; }; // reveals the letter badge behind it
+  });
+}
+
+// best-effort unfurl (title/description/image) via a CORS-friendly service,
+// only when the user has opted in. Cached on the item so it syncs and never
+// re-fetches. Silent on any failure — the favicon card is always the fallback.
+async function fetchLinkMeta(url) {
+  try {
+    const r = await fetch('https://api.microlink.io/?url=' + encodeURIComponent(url), { mode: 'cors' });
+    if (!r.ok) return null;
+    const j = await r.json();
+    if (j.status !== 'success') return null;
+    const d = j.data || {};
+    return { title: (d.title || '').slice(0, 120), desc: (d.description || '').slice(0, 140),
+      image: (d.image && d.image.url) || (d.logo && d.logo.url) || '', at: Date.now() };
+  } catch { return null; }
+}
+async function enrichLinks(item, onDone) {
+  if (!state.linkPreviews || !navigator.onLine) return;
+  const meta = item.linkMeta || (item.linkMeta = {});
+  let got = false;
+  for (const u of linkUrls(item.notes)) {
+    if (meta[u]) continue;
+    const m = await fetchLinkMeta(u);
+    if (m) { meta[u] = m; got = true; }
+  }
+  if (got) { save(); onDone && onDone(); changed(); }
 }
 
 function shrinkImage(file, max = 1000) {
@@ -1076,6 +1206,9 @@ export function renderSettings() {
     '<div class="group-head">household notes for the agent</div>' +
     '<textarea id="setNotes" placeholder="Facts the agent should know, e.g. “blue IKEA + rainbow bags = clean laundry to put away; bamboo baskets = dirty laundry”">' + esc(state.agentNotes || '') + '</textarea>' +
     '<p class="hint">Included in every Gemini prompt (text and photo dumps). Write how your home actually works — the agent treats it as ground truth.</p>' +
+    '<div class="group-head">link previews</div>' +
+    '<label class="toggle" style="padding:6px 0"><input type="checkbox" id="setLinkPrev"' + (state.linkPreviews ? ' checked' : '') + '> fetch titles &amp; preview images for links in notes</label>' +
+    '<p class="hint">Off by default. When on, a link you paste is sent to a preview service (microlink.io) to fetch its title and image; the result is cached and shared with your household. Leave off to keep link URLs private — cards still show the site icon and name.</p>' +
     '<div class="group-head">sync · google drive</div>' + syncSettingsHtml() +
     '<div class="group-head">data</div>' +
     '<div class="setrow"><button id="setExport" class="chip">Export JSON</button> ' +
@@ -1095,6 +1228,7 @@ export function renderSettings() {
   });
   $('#setGemini').onchange = (e) => { setKey(e.target.value); };
   $('#setNotes').onchange = (e) => { state.agentNotes = e.target.value.trim(); save(); };
+  $('#setLinkPrev').onchange = (e) => { state.linkPreviews = e.target.checked; save(); };
   wireSyncSettings();
   $('#setSwitch').onclick = () => {
     state.profile = state.profile === 'anna' ? 'ebbe' : 'anna';
