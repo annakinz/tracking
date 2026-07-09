@@ -1152,6 +1152,7 @@ function syncSettingsHtml() {
         : '<button id="syCreate" class="chip">Create household</button> <button id="syJoin" class="chip">Join ' + esc(partnerName()) + '’s</button>') +
     '</div>' +
     '<p class="hint' + (c.lastError ? ' sync-err' : '') + '" id="syDiag">' + syncDiag(c) + '</p>' +
+    '<p class="hint">If sign-in says <b>redirect_uri_mismatch</b>: in Google Cloud → Credentials → your OAuth client → <b>Authorized redirect URIs</b>, add this exact URL:<br><b>' + esc(gsync.redirectUri()) + '</b></p>' +
     '<label class="toggle" style="padding:6px 0"><input type="checkbox" id="syPriv"' + (c.privateBackup !== false ? ' checked' : '') + '> back up my private items to my own Drive</label>' +
     '<p class="hint">Shared items sync to a household file both of you can read; private items back up only to your own Drive. Set up a free Google Cloud project (client ID + API key) — see the chat instructions.</p>'
   );
