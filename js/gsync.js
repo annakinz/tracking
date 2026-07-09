@@ -45,23 +45,42 @@ function ensureLibs() {
 }
 
 // ---- OAuth ----
+// One token request. `prompt:''` tries silently (reuses an existing Google
+// session); error_callback is essential — without it a closed/blocked popup
+// or a failed silent request just hangs, which looks like a dead button.
+function requestToken(cfg, prompt) {
+  return new Promise((res, rej) => {
+    tokenClient = window.google.accounts.oauth2.initTokenClient({
+      client_id: cfg.clientId,
+      scope: SCOPES,
+      prompt,
+      callback: (resp) => {
+        if (resp && resp.access_token) {
+          accessToken = resp.access_token;
+          tokenExpiry = Date.now() + (resp.expires_in - 60) * 1000;
+          res();
+        } else {
+          rej(new Error(resp && resp.error ? resp.error : 'no access token'));
+        }
+      },
+      error_callback: (err) => rej(new Error((err && (err.message || err.type)) || 'sign-in was cancelled')),
+    });
+    try { tokenClient.requestAccessToken(); } catch (e) { rej(e); }
+  });
+}
+
 export async function connect() {
   const cfg = syncConfig();
   if (!cfg.clientId) throw new Error('Add your Google client ID in Settings first.');
   await ensureLibs();
-  await new Promise((res, rej) => {
-    tokenClient = window.google.accounts.oauth2.initTokenClient({
-      client_id: cfg.clientId,
-      scope: SCOPES,
-      callback: (resp) => {
-        if (resp.error) return rej(new Error(resp.error));
-        accessToken = resp.access_token;
-        tokenExpiry = Date.now() + (resp.expires_in - 60) * 1000;
-        res();
-      },
-    });
-    tokenClient.requestAccessToken({ prompt: cfg.everConnected ? '' : 'consent' });
-  });
+  // Try silent first if we've connected before; if that fails (expired
+  // session, mobile Safari blocking third-party cookies, …), fall back to the
+  // interactive consent popup so the button always does *something*.
+  try {
+    await requestToken(cfg, cfg.everConnected ? '' : 'consent');
+  } catch (e) {
+    await requestToken(cfg, 'consent');
+  }
   cfg.everConnected = true;
   save();
 }
