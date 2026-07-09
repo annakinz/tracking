@@ -2,7 +2,7 @@
 
 import { state, save, inboxItems, memberName, tickLoops } from './store.js';
 import { initSizer, openSizer, openUniverse } from './bubbles.js';
-import { initDump, initHouse, renderLists, renderHouse, renderSettings, renderTakeover, refreshDumpResults, allSurfaced, openSheet } from './views.js';
+import { initDump, initHouse, renderLists, renderHouse, renderSettings, renderTakeover, refreshDumpResults, allSurfaced, openSheet, initNews, renderNewsBlob } from './views.js';
 import { syncNow, syncConfigured } from './gsync.js';
 
 const $ = (s) => document.querySelector(s);
@@ -46,9 +46,11 @@ function init() {
   initDump();
   initHouse();
   initSizer();
+  initNews();
 
   document.addEventListener('stratos:changed', () => {
     refreshBadge();
+    renderNewsBlob(); // a sync from the other person may have brought news
     if (current === 'dump') refreshDumpResults();
     if (current === 'lists') renderLists();
     if (current === 'house') renderHouse();
@@ -83,6 +85,7 @@ function init() {
 
   refreshProfileChip();
   refreshBadge();
+  renderNewsBlob(); // show any unreviewed changes from the other person
   goto('lists'); // the app opens to your ranked list
   renderTakeover(); // if anything is surfacing, it floats before everything else
 

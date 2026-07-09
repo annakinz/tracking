@@ -1,9 +1,10 @@
 // List / dump / house / settings / detail-sheet rendering.
 
 import {
-  state, save, uid, addItem, getItem, updateItem, deleteItem, markDone,
+  state, save, uid, addItem, getItem, updateItem, deleteItem, markDone, attachDoneNote,
   uOf, effectivePriority, gravityBoost, effDueISO, memberName, visibleTo,
   inboxItems, childrenOf, exportJSON, importJSON, resetAll, DIM_ORDER, BUILD,
+  newsItems, reviewNews, clearNews, otherUsers, partnerName,
 } from './store.js';
 import { parseDump, classifyOne } from './classify.js';
 import { agentClassify, agentPhotoTasks, getKey, setKey } from './agent.js';
@@ -138,14 +139,107 @@ export function showToast(msg, actionLabel, fn) {
   toastTimer = setTimeout(() => { t.hidden = true; }, 5000);
 }
 
-// finish/unfinish with an undo toast, so an accidental tap is recoverable
+// finish/unfinish with an undo toast, so an accidental tap is recoverable.
+// Finishing a SHARED task instead opens a little popover to (optionally) leave
+// a note for the other person — the note rides along in their review blob.
 function finishItem(id, done) {
+  const it = getItem(id);
+  if (done && it && it.visibility === 'shared' && otherUsers().length) {
+    openDonePop(id);
+    return;
+  }
   markDone(id, done);
   changed();
   if (done) {
-    const it = getItem(id);
     showToast('Done: ' + (it ? it.title : 'item'), 'Undo', () => { markDone(id, false); changed(); });
   }
+}
+
+// ---------- completion note to the other person ----------
+function openDonePop(id) {
+  const it = getItem(id);
+  if (!it) return;
+  markDone(id, true);            // it's done immediately; the note is a bonus
+  changed();
+  const who = partnerName();
+  const wrap = $('#donePopWrap'), pop = $('#donePop');
+  pop.innerHTML =
+    '<div class="dp-title">Done <span class="dp-check">✓</span></div>' +
+    '<div class="dp-item">' + esc(it.title) + '</div>' +
+    '<textarea id="dpNote" rows="2" placeholder="Leave a note for ' + esc(who) + ' (optional)…"></textarea>' +
+    '<div class="dp-actions">' +
+      '<button id="dpUndo" class="dp-undo">Undo</button>' +
+      '<button id="dpSkip" class="dp-skip">Done, no note</button>' +
+      '<button id="dpSend" class="primary">Send note ✎</button>' +
+    '</div>';
+  wrap.hidden = false;
+  const close = () => { wrap.hidden = true; };
+  $('#dpUndo').onclick = () => { markDone(id, false); changed(); close(); };
+  $('#dpSkip').onclick = close;
+  $('#dpSend').onclick = () => {
+    const n = $('#dpNote').value.trim();
+    if (n) { attachDoneNote(id, n); changed(); showToast('Note on its way to ' + who + ' ✓'); }
+    close();
+  };
+  $('#donePopShade').onclick = close;
+  setTimeout(() => { const t = $('#dpNote'); if (t) t.focus(); }, 60);
+}
+
+// ---------- "while you were away": the jelly review blob ----------
+export function initNews() {
+  $('#newsBlob').onclick = openNews;
+  $('#newsShade').onclick = () => { $('#newsWrap').hidden = true; };
+  $('#newsAll').onclick = () => {
+    // pop every card in a quick satisfying cascade, then clear
+    const cards = [...document.querySelectorAll('.news-card:not(.popped)')];
+    cards.forEach((c, i) => setTimeout(() => c.classList.add('popped'), i * 70));
+    if (navigator.vibrate) navigator.vibrate(20);
+    setTimeout(() => { clearNews(); renderNewsBlob(); $('#newsWrap').hidden = true; }, cards.length * 70 + 320);
+  };
+}
+
+export function renderNewsBlob() {
+  const n = newsItems().length;
+  $('#newsBlob').hidden = n === 0;
+  $('#newsBlobCount').textContent = n;
+  if (n === 0) $('#newsWrap').hidden = true;
+}
+
+function openNews() {
+  const items = newsItems();
+  if (!items.length) return;
+  const list = $('#newsList');
+  list.innerHTML = '';
+  for (const ev of items) {
+    const who = memberName(ev.by);
+    const card = document.createElement('div');
+    card.className = 'news-card ' + ev.kind;
+    card.innerHTML =
+      '<div class="nc-body">' +
+        '<div class="nc-line"><b>' + esc(who) + '</b> ' + (ev.kind === 'done' ? 'finished' : 'added') + '</div>' +
+        '<div class="nc-title">' + esc(ev.title) + '</div>' +
+        (ev.note ? '<div class="nc-note">“' + esc(ev.note) + '”</div>' : '') +
+      '</div>' +
+      '<button class="nc-pop" title="reviewed">✓</button>';
+    card.querySelector('.nc-pop').onclick = () => popNews(card, ev.key);
+    card.querySelector('.nc-body').onclick = () => {
+      if (getItem(ev.itemId)) { $('#newsWrap').hidden = true; openSheet(ev.itemId); }
+    };
+    list.appendChild(card);
+  }
+  $('#newsWrap').hidden = false;
+}
+
+function popNews(card, key) {
+  if (card.classList.contains('popped')) return;
+  card.classList.add('popped');
+  if (navigator.vibrate) navigator.vibrate(12);
+  setTimeout(() => {
+    card.remove();          // let the panel reflow once it has splatted away
+    reviewNews(key);
+    renderNewsBlob();
+    if (!newsItems().length) $('#newsWrap').hidden = true;
+  }, 320);
 }
 
 // ---------- DUMP ----------

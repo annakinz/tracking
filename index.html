@@ -163,6 +163,22 @@
   <button id="takeoverDismiss">everything else ↓</button>
 </div>
 
+<!-- news from the household: a jelly blob that pops as you review each change -->
+<button id="newsBlob" hidden><span id="newsBlobFace">◕‿◕</span><span id="newsBlobCount"></span></button>
+<div id="newsWrap" hidden>
+  <div id="newsShade"></div>
+  <div id="newsPanel">
+    <div class="news-head">while you were away <button id="newsAll">pop all</button></div>
+    <div id="newsList"></div>
+  </div>
+</div>
+
+<!-- completion note: finishing a shared task offers a note to the other person -->
+<div id="donePopWrap" hidden>
+  <div id="donePopShade"></div>
+  <div id="donePop"></div>
+</div>
+
 <!-- first-run profile picker -->
 <div id="firstRun" hidden>
   <div class="fr-card">

@@ -4,7 +4,7 @@ const DB_KEY = 'stratos.v1';
 
 // Build number — bump together with the service-worker CACHE in sw.js on
 // every deploy. Shown in Settings so you can confirm your phone is current.
-export const BUILD = '27';
+export const BUILD = '28';
 
 export const DIM_ORDER = ['priority', 'effort', 'difficulty', 'dread', 'restock'];
 
@@ -36,6 +36,10 @@ function freshState() {
     seq: 1,
     // per-file deletion/unshare tombstones (id -> ts) for Drive sync merge
     syncTomb: { shared: {}, private: {} },
+    // "while you were away": changes the OTHER person made, waiting to be
+    // reviewed (popped). newsSeen dedupes so a popped item never comes back;
+    // newsInit is set after the first shared sync so joining doesn't flood.
+    news: [], newsSeen: {}, newsInit: false,
   };
 }
 
@@ -190,11 +194,24 @@ export function setMagnitude(id, dimId, stratumId, frac) {
   save();
 }
 
-export function markDone(id, done = true) {
+export function markDone(id, done = true, note) {
   const item = getItem(id);
   if (!item) return;
   item.status = done ? 'done' : 'active';
   item.doneAt = done ? Date.now() : null;
+  item.doneBy = done ? state.profile : null;      // who finished it (for the other's news)
+  if (!done) item.doneNote = null;
+  else if (note != null) item.doneNote = String(note).trim() || null;
+  touch(item);
+  save();
+}
+
+// Attach/replace a note to the other person on an already-finished item —
+// travels with the item through sync and shows up in their review blob.
+export function attachDoneNote(id, note) {
+  const item = getItem(id);
+  if (!item) return;
+  item.doneNote = (note || '').trim() || null;
   touch(item);
   save();
 }
@@ -352,11 +369,46 @@ export function syncSnapshot(kind, me) {
   return { v: 1, items, deleted: { ...tombFor(kind) }, at: Date.now() };
 }
 
+// Record one "news" event (the other person added/finished a shared item).
+// Deduped by a stable key so a popped card never returns; during the very
+// first shared sync we only seed the keys (seeding) so nothing surfaces.
+function pushNews(ev, seeding) {
+  if (!state.newsSeen) state.newsSeen = {};
+  const key = ev.kind + ':' + ev.itemId + ':' + ev.at;
+  if (state.newsSeen[key]) return;
+  state.newsSeen[key] = Date.now();
+  if (seeding) return;
+  if (!state.news) state.news = [];
+  state.news.push({ ...ev, key });
+}
+
+// Decide whether an incoming shared item is news for me. prevStatus is the
+// local status before the merge (undefined = the item is new to me).
+function detectNews(it, prevStatus, seeding) {
+  if (it.visibility !== 'shared') return;
+  const me = state.profile;
+  if (prevStatus === undefined) {
+    if (!it.createdBy || it.createdBy === me) return;    // my own item, or unknown
+    if (it.status === 'done') {
+      // already finished when it reaches me: news only if someone else did it
+      if (it.doneBy && it.doneBy !== me)
+        pushNews({ itemId: it.id, kind: 'done', by: it.doneBy, title: it.title, note: it.doneNote || '', at: it.doneAt || it.updatedAt || 0 }, seeding);
+      return;
+    }
+    pushNews({ itemId: it.id, kind: 'added', by: it.createdBy, title: it.title, note: '', at: it.createdAt || it.updatedAt || 0 }, seeding);
+  } else if (it.status === 'done' && prevStatus !== 'done' && it.doneBy && it.doneBy !== me) {
+    pushNews({ itemId: it.id, kind: 'done', by: it.doneBy, title: it.title, note: it.doneNote || '', at: it.doneAt || it.updatedAt || 0 }, seeding);
+  }
+}
+
 // Merge a downloaded file into local state; returns true if anything changed.
 export function applySync(kind, remote) {
   if (!remote || typeof remote !== 'object') return false;
   let changed = false;
   const tomb = tombFor(kind);
+  // only the shared household file carries news; seed silently the first time
+  const watch = kind === 'shared';
+  const seeding = watch && !state.newsInit;
   for (const [id, ts] of Object.entries(remote.deleted || {})) {
     if (!tomb[id] || ts > tomb[id]) tomb[id] = ts;
     const local = getItem(id);
@@ -368,19 +420,32 @@ export function applySync(kind, remote) {
   for (const it of Object.values(remote.items || {})) {
     if (tomb[it.id] && tomb[it.id] >= (it.updatedAt || 0)) continue; // deleted newer locally
     const local = getItem(it.id);
-    if (!local) { state.items.push({ ...it, media: [] }); changed = true; }
-    else if ((it.updatedAt || 0) > (local.updatedAt || 0)) {
+    if (!local) {
+      state.items.push({ ...it, media: [] }); changed = true;
+      if (watch) detectNews(it, undefined, seeding);
+    } else if ((it.updatedAt || 0) > (local.updatedAt || 0)) {
+      const prev = local.status;
       const idx = state.items.findIndex(x => x.id === it.id);
       state.items[idx] = { ...it, media: local.media || [] }; // keep local photos
       changed = true;
+      if (watch) detectNews(it, prev, seeding);
     }
   }
-  // prune tombstones older than 90 days so the maps don't grow forever
+  // prune tombstones + seen-news keys older than 90 days so the maps don't grow
   const cutoff = Date.now() - 90 * 86400e3;
   for (const [id, ts] of Object.entries(tomb)) if (ts < cutoff) delete tomb[id];
-  if (changed) save();
+  for (const [k, ts] of Object.entries(state.newsSeen || {})) if (ts < cutoff) delete state.newsSeen[k];
+  if (watch) state.newsInit = true;   // past the first sync — future changes surface
+  if (changed || seeding) save();
   return changed;
 }
+
+// ---------- news (the other person's changes, waiting to be reviewed) ----------
+export function newsItems() { return (state.news || []).slice().sort((a, b) => (b.at || 0) - (a.at || 0)); }
+export function reviewNews(key) { state.news = (state.news || []).filter(n => n.key !== key); save(); }
+export function clearNews() { state.news = []; save(); }
+export function otherUsers() { return state.family.filter(f => f.user && f.id !== state.profile); }
+export function partnerName() { const o = otherUsers()[0]; return o ? o.name : 'the household'; }
 
 export function syncConfig() { return state.sync || (state.sync = {}); }
 export function saveState() { save(); }
