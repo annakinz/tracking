@@ -1148,7 +1148,7 @@ function syncSettingsHtml() {
     '<span class="hint" id="syStatus">last sync: ' + last + '</span></div>' +
     '<div class="setrow">' +
       (c.householdFileId
-        ? '<button id="syInvite" class="chip">Invite ' + esc(partnerName()) + ' (email)</button> <span class="hint">household connected</span>'
+        ? '<button id="syInvite" class="chip">Invite ' + esc(partnerName()) + ' (email)</button> <button id="syLeave" class="chip danger">Leave / re-join</button>'
         : '<button id="syCreate" class="chip">Create household</button> <button id="syJoin" class="chip">Join ' + esc(partnerName()) + '’s</button>') +
     '</div>' +
     '<p class="hint' + (c.lastError ? ' sync-err' : '') + '" id="syDiag">' + syncDiag(c) + '</p>' +
@@ -1193,7 +1193,8 @@ function wireSyncSettings() {
   };
   const cr = $('#syCreate'); if (cr) cr.onclick = async () => { try { await gsync.createHousehold(); await gsync.syncNow(); renderSettings(); alert('Household created — now Invite ' + partnerName() + '.'); } catch (e) { alert(e.message); } };
   const jn = $('#syJoin'); if (jn) jn.onclick = async () => { try { const id = await gsync.joinHousehold(); if (id) { await gsync.syncNow(); renderSettings(); } } catch (e) { alert(e.message); } };
-  const iv = $('#syInvite'); if (iv) iv.onclick = async () => { const em = prompt(partnerName() + '’s Google email:'); if (em) { try { await gsync.invite(em.trim()); alert('Invited ' + em); } catch (e) { alert(e.message); } } };
+  const iv = $('#syInvite'); if (iv) iv.onclick = async () => { const em = prompt(partnerName() + '’s Google email:'); if (em) { try { await gsync.invite(em.trim()); alert('Invited ' + em + ' — they can now Join / re-join.'); } catch (e) { alert('Invite failed: ' + e.message); } } };
+  const lv = $('#syLeave'); if (lv) lv.onclick = () => { if (confirm('Leave this household file? Your items stay on this phone — you can Join again after being invited.')) { gsync.leaveHousehold(); renderSettings(); } };
 }
 
 // ---------- sheet helpers ----------

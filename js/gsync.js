@@ -17,9 +17,24 @@ let tokenExpiry = 0;
 let libsReady = null;
 let syncing = false;
 let onStatus = () => {};
+let tokenLoaded = false;
+
+// Persist the access token (the user's own, ~1h lived) so a reload doesn't
+// sign them out and force a fresh popup every session.
+function loadToken() {
+  if (tokenLoaded) return;
+  tokenLoaded = true;
+  const c = syncConfig();
+  if (c.tok && c.tok.exp > Date.now() + 5000) { accessToken = c.tok.access; tokenExpiry = c.tok.exp; }
+}
+function saveToken() {
+  const c = syncConfig();
+  c.tok = { access: accessToken, exp: tokenExpiry };
+  save();
+}
 
 export function onSyncStatus(fn) { onStatus = fn; }
-export function isSignedIn() { return !!accessToken && Date.now() < tokenExpiry; }
+export function isSignedIn() { loadToken(); return !!accessToken && Date.now() < tokenExpiry; }
 export function syncConfigured() {
   const c = syncConfig();
   return !!(c.clientId && (c.householdFileId || c.privateFileId || c.everConnected));
@@ -82,6 +97,7 @@ function requestToken(cfg, prompt) {
         if (resp && resp.access_token) {
           accessToken = resp.access_token;
           tokenExpiry = Date.now() + (resp.expires_in - 60) * 1000;
+          saveToken();
           settle(res);
         } else {
           settle(rej, new Error(friendlyError(resp && (resp.error || resp.error_description))));
@@ -119,9 +135,17 @@ export function connect() {
   connecting.finally(() => { connecting = null; });
   return connecting;
 }
+// Sync uses this — it must NEVER open the interactive popup (a popup outside a
+// tap gesture is blocked). It only reuses the stored token or refreshes it
+// silently; if that's not possible it asks the user to reconnect via the
+// Connect button (the one place a real tap can open the Google screen).
 async function ensureToken() {
   if (isSignedIn()) return;
-  await connect();
+  const cfg = syncConfig();
+  if (!cfg.clientId) throw new Error('Add your Google client ID and tap Connect Google in Settings.');
+  await ensureLibs();
+  try { await requestToken(cfg, ''); }
+  catch (e) { throw new Error('Google sign-in expired — open Settings and tap Connect Google to reconnect.'); }
 }
 
 // ---- Drive REST ----
@@ -145,11 +169,12 @@ async function writeFile(id, obj) {
     headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
     body: JSON.stringify(obj),
   });
-  // a silently-dropped write (e.g. read-only access to the household file) is
-  // the classic "my items never reach the other person" bug — surface it
+  // a silently-dropped write is the classic "my items never reach the other
+  // person" bug — surface it with a plain-language cause
   if (!res.ok) {
     const t = (await res.text().catch(() => '')).slice(0, 140);
-    if (res.status === 403) throw new Error("can't write to the household file — you have read-only access. The person who created it must Invite you as an editor.");
+    if (res.status === 404) throw new Error("can't reach the household file — it isn't shared with this Google account. Tap “Leave household”, have the other person Invite you, then Join again.");
+    if (res.status === 403) throw new Error("read-only access to the household file — the person who created it must Invite you as an editor.");
     throw new Error('write ' + res.status + ' ' + t);
   }
   return res;
@@ -199,7 +224,7 @@ export async function invite(email) {
       headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
       body: JSON.stringify({ role: 'writer', type: 'user', emailAddress: email }),
     });
-  if (!res.ok) throw new Error('invite ' + res.status);
+  if (!res.ok) throw new Error('invite ' + res.status + ' ' + (await res.text().catch(() => '')).slice(0, 140));
 }
 export async function joinHousehold() {
   const cfg = syncConfig();
@@ -218,8 +243,17 @@ export async function joinHousehold() {
       .build();
     picker.setVisible(true);
   });
-  if (id) { cfg.householdFileId = id; save(); }
+  if (id) { cfg.householdFileId = id; cfg.lastError = null; save(); }
   return id;
+}
+// forget the current household file so Create/Join come back (to re-join a
+// correctly-shared file). Local items are untouched.
+export function leaveHousehold() {
+  const cfg = syncConfig();
+  cfg.householdFileId = null;
+  cfg.lastError = null;
+  cfg.lastSharedCount = undefined;
+  save();
 }
 
 // ---- the sync loop: pull → merge → push, for shared + private files ----
