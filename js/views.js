@@ -472,7 +472,10 @@ export function renderLists() {
     return;
   }
 
-  const inbox = allActive.filter(i => i.status === 'inbox');
+  // Count exactly what the sizer will show — the dotted/unsized bubbles — so this
+  // prompt can never outlive them (see inboxItems in store.js). Not the list's
+  // filtered view: the sizer surfaces everything visible to you.
+  const inbox = inboxItems();
   if (inbox.length) {
     const btn = document.createElement('button');
     btn.className = 'primary wide';
@@ -595,7 +598,7 @@ function itemRow(i, sort, opts = {}) {
       (kids.length ? '<button class="rchip" data-steps>◉ ' + kids.filter(k => k.status === 'done').length + '/' + kids.length + '</button>' : '') +
       (i.claimedBy ? '<span class="minichip claim">🙌 ' + esc(memberName(i.claimedBy)) + (i.claimedBy === state.profile ? ' (you)' : '') + '</span>' : '') +
       rchip('visibility', i.visibility === 'private' ? 'private' : 'shared') +
-      (i.status === 'inbox' ? '<span class="minichip unsized">unsized</span>' : '') +
+      (uOf(i, 'priority') === null ? '<span class="minichip unsized">unsized</span>' : '') +
     '</span></span>' +
     '<button class="row-icon" data-done title="done">' + (i.status === 'done' ? '↺' : '✓') + '</button>' +
     '<button class="row-icon edit" data-edit title="edit all">✎</button>';

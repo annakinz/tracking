@@ -4,7 +4,7 @@ const DB_KEY = 'stratos.v1';
 
 // Build number — bump together with the service-worker CACHE in sw.js on
 // every deploy. Shown in Settings so you can confirm your phone is current.
-export const BUILD = '42';
+export const BUILD = '43';
 
 export const DIM_ORDER = ['priority', 'effort', 'difficulty', 'dread', 'restock'];
 
@@ -476,8 +476,19 @@ export function visibleTo(item, profile) {
   return item.visibility !== 'private' || item.createdBy === profile;
 }
 
+// Items the sizer will actually show you as dotted/unsized bubbles. This is the
+// single source of truth for the "Size N new items" prompt and the Size-tab
+// badge, so the number can never disagree with what's on screen. It matches the
+// universe's own filter (openUniverse in bubbles.js): not done, not a subtask,
+// not a wellbeing issue, visible to you — AND still missing a priority. Using
+// status==='inbox' here was the bug: an issue or subtask stays 'inbox' forever
+// (the universe never surfaces it), so it produced a phantom "1 to size" with no
+// bubble to size; and an item sized on a non-priority dim flips to 'active' yet
+// is still a dotted bubble. Priority-unset is the honest signal.
 export function inboxItems() {
-  return state.items.filter(i => i.status === 'inbox' && visibleTo(i, state.profile));
+  return state.items.filter(i =>
+    i.status !== 'done' && !i.parent && i.type !== 'issue' &&
+    visibleTo(i, state.profile) && uOf(i, 'priority') === null);
 }
 
 export function exportJSON() { return JSON.stringify(state, null, 2); }
