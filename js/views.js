@@ -9,7 +9,7 @@ import {
   backupList, restoreBackup,
 } from './store.js';
 import { parseDump, classifyOne } from './classify.js';
-import { agentClassify, agentPhotoTasks, getKey, setKey } from './agent.js';
+import { agentClassify, agentPhotoTasks, getKey, setKey, testKey, lastAgentError } from './agent.js';
 import { openSizer } from './bubbles.js';
 import * as hsync from './hsync.js';
 
@@ -369,7 +369,7 @@ function renderDumpResults(items, viaAgent) {
   lastFiledViaAgent = viaAgent;
   const box = $('#dumpResults');
   const via = viaAgent ? '✦ filed by Gemini'
-    : getKey() ? 'filed by built-in rules (Gemini unreachable)'
+    : getKey() ? 'filed by built-in rules — Gemini: ' + (lastAgentError() || 'unreachable') + ' · ⚙︎ Settings → Test'
     : 'filed by built-in rules — add a Gemini key in ⚙︎ Settings for smarter filing';
   box.innerHTML = '<div class="hint" style="margin-top:14px">Filed ' + items.length +
     (items.length === 1 ? ' item' : ' items') + ' <span style="opacity:.7">(' + via + ')</span>' +
@@ -1346,7 +1346,8 @@ export function renderSettings() {
     '<button id="setSwitch" class="chip">switch</button></div>' +
     '<div class="group-head">family</div>' + famRows +
     '<div class="group-head">agent</div>' +
-    '<label class="famrow"><input id="setGemini" type="password" placeholder="Gemini API key (free at aistudio.google.com/apikey)" value="' + esc(getKey()) + '"></label>' +
+    '<label class="famrow"><input id="setGemini" type="password" placeholder="Gemini API key (free at aistudio.google.com/apikey)" value="' + esc(getKey()) + '" autocapitalize="none" autocorrect="off" spellcheck="false"></label>' +
+    '<div class="setrow"><button id="setGeminiTest" class="chip">Test key</button> <span class="hint" id="setGeminiStatus"></span></div>' +
     '<p class="hint">With a key, dumps are filed by Gemini (free tier, called straight from this device — the key never leaves it and is not included in exports). Without one, built-in rules do the filing. Your corrections teach both.</p>' +
     '<div class="group-head">household notes for the agent</div>' +
     '<textarea id="setNotes" placeholder="Facts the agent should know, e.g. “blue IKEA + rainbow bags = clean laundry to put away; bamboo baskets = dirty laundry”">' + esc(state.agentNotes || '') + '</textarea>' +
@@ -1374,6 +1375,16 @@ export function renderSettings() {
     };
   });
   $('#setGemini').onchange = (e) => { setKey(e.target.value); };
+  $('#setGeminiTest').onclick = async () => {
+    const btn = $('#setGeminiTest'), st = $('#setGeminiStatus');
+    setKey($('#setGemini').value); // test exactly what's in the box, even unsaved
+    btn.disabled = true; btn.textContent = 'Testing…'; st.textContent = '';
+    st.classList.remove('sync-err');
+    const r = await testKey();
+    st.textContent = (r.ok ? '✓ ' : '⚠ ') + r.message;
+    st.classList.toggle('sync-err', !r.ok);
+    btn.disabled = false; btn.textContent = 'Test key';
+  };
   $('#setNotes').onchange = (e) => { state.agentNotes = e.target.value.trim(); save(); };
   $('#setLinkPrev').onchange = (e) => { state.linkPreviews = e.target.checked; save(); };
   wireSyncSettings();

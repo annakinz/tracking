@@ -17,6 +17,12 @@ export const setKey = (k) => {
   else localStorage.removeItem(KEY_STORE);
 };
 
+// Why the last Gemini call fell back to the local rules — surfaced in the dump
+// toast and the Settings "Test" button so a misconfigured key is diagnosable
+// instead of a silent "unreachable".
+let lastError = '';
+export const lastAgentError = () => lastError;
+
 // What this family actually does — completed and recurring items teach the
 // model the household's patterns (which bags are laundry, what piles up where).
 function habitContext() {
@@ -120,9 +126,9 @@ function sanitize(o) {
 
 // Shared Gemini call: parts in, schema-constrained JSON out, null on any
 // failure so callers can fall back gracefully.
-async function callGemini(parts, schema, timeoutMs = 12000) {
+async function callGemini(parts, schema, timeoutMs = 20000) {
   const key = getKey();
-  if (!key) return null;
+  if (!key) { lastError = 'no API key set'; return null; }
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -142,17 +148,53 @@ async function callGemini(parts, schema, timeoutMs = 12000) {
         }),
       });
     if (!res.ok) {
-      console.warn('Stratos agent: Gemini returned', res.status, await res.text().catch(() => ''));
+      lastError = await explainHttp(res);
+      console.warn('Stratos agent: Gemini returned', res.status, lastError);
       return null;
     }
     const data = await res.json();
-    return JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text);
+    const txt = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!txt) { lastError = 'Gemini returned no content (was the dump blocked as unsafe?)'; return null; }
+    const parsed = JSON.parse(txt);
+    lastError = '';
+    return parsed;
   } catch (e) {
-    console.warn('Stratos agent: falling back —', e.message);
+    lastError = e.name === 'AbortError'
+      ? `timed out after ${Math.round(timeoutMs / 1000)}s (slow connection?)`
+      : `couldn’t reach Google (${e.message}) — check your connection`;
+    console.warn('Stratos agent: falling back —', lastError);
     return null;
   } finally {
     clearTimeout(timer);
   }
+}
+
+// Turn Google's error JSON into one plain sentence pointing at the actual fix.
+async function explainHttp(res) {
+  let msg = '', status = '';
+  try { const j = await res.json(); msg = j.error?.message || ''; status = j.error?.status || ''; }
+  catch (e) { try { msg = await res.text(); } catch (e2) {} }
+  const m = (msg || '').toLowerCase();
+  if (res.status === 400 && m.includes('api key not valid')) return 'that API key isn’t valid — copy it again from aistudio.google.com/apikey';
+  if (res.status === 400 && m.includes('api_key')) return 'API key problem — regenerate it at aistudio.google.com/apikey';
+  if (res.status === 403 && m.includes('referer')) return 'the key is restricted to certain websites — in Google Cloud, allow annakinz.github.io or remove the HTTP-referrer restriction';
+  if (res.status === 403 && (m.includes('service') || m.includes('disabled') || m.includes('has not been used'))) return 'the Generative Language API is turned off for this key’s project — enable it in Google Cloud, then wait a minute';
+  if (res.status === 403) return 'access denied (403)' + (msg ? ' — ' + msg : '');
+  if (res.status === 404) return 'model “' + MODEL + '” not found for this key — the key may be from a project without access';
+  if (res.status === 429) return 'rate-limited (429) — the free tier is temporarily maxed out; try again in a minute';
+  return 'Gemini error ' + res.status + (status ? ' ' + status : '') + (msg ? ' — ' + msg : '');
+}
+
+// A one-shot health check for the Settings screen: does this key actually work
+// right now? Returns { ok, message }.
+export async function testKey() {
+  if (!getKey()) return { ok: false, message: 'No key entered yet.' };
+  const out = await callGemini(
+    [{ text: 'Reply with a JSON object {"ok": true}. Nothing else.' }],
+    { type: 'OBJECT', properties: { ok: { type: 'BOOLEAN' } }, required: ['ok'] },
+    15000);
+  return out ? { ok: true, message: 'Working — Gemini is filing your dumps.' }
+             : { ok: false, message: lastError || 'unknown error' };
 }
 
 // Returns classified items, or null (caller falls back to heuristics).
