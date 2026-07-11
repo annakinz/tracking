@@ -4,7 +4,7 @@ const DB_KEY = 'stratos.v1';
 
 // Build number — bump together with the service-worker CACHE in sw.js on
 // every deploy. Shown in Settings so you can confirm your phone is current.
-export const BUILD = '45';
+export const BUILD = '46';
 
 export const DIM_ORDER = ['priority', 'effort', 'difficulty', 'dread', 'restock'];
 
@@ -629,3 +629,135 @@ export function partnerName() { const o = otherUsers()[0]; return o ? o.name : '
 
 export function syncConfig() { return state.sync || (state.sync = {}); }
 export function saveState() { save(); }
+
+// ---------- packing lists ----------
+// Two shapes: reusable *templates* (the core list you brain-dump into and edit
+// as the kids grow) and *trips* — a checklist instance spun off a template that
+// you tick as you pack and can still add to. Trips are kept after the trip so
+// you always have the old lists. Lives in state so it's backed up, exported,
+// and imported with everything else. (Not synced yet — local to this device.)
+function packStore() {
+  if (!state.packing) state.packing = { templates: [], trips: [] };
+  if (!state.packing.templates) state.packing.templates = [];
+  if (!state.packing.trips) state.packing.trips = [];
+  return state.packing;
+}
+function pkId(p) { return p + Math.random().toString(36).slice(2, 8) + Date.now().toString(36); }
+function splitLines(text) { return String(text || '').split(/[\n,]+/).map(s => s.trim()).filter(Boolean); }
+const norm = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+export function packTemplates() {
+  return packStore().templates.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+}
+export function packTrips() {
+  return packStore().trips.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+export function getTemplate(id) { return packStore().templates.find(t => t.id === id) || null; }
+export function getTrip(id) { return packStore().trips.find(t => t.id === id) || null; }
+
+export function addTemplate(name) {
+  const t = { id: pkId('pt'), name: (name || '').trim() || 'Packing list', items: [], createdAt: Date.now(), updatedAt: Date.now() };
+  packStore().templates.push(t); save(); return t;
+}
+export function renameTemplate(id, name) {
+  const t = getTemplate(id); if (!t) return;
+  t.name = (name || '').trim() || t.name; t.updatedAt = Date.now(); save();
+}
+export function deleteTemplate(id) {
+  packStore().templates = packStore().templates.filter(t => t.id !== id); save();
+}
+// Append one or many items (newline/comma separated), skipping ones already
+// present so re-dumping the core list doesn't duplicate it.
+export function addTemplateItems(id, text) {
+  const t = getTemplate(id); if (!t) return 0;
+  const have = new Set(t.items.map(i => norm(i.text)));
+  let n = 0;
+  for (const line of splitLines(text)) {
+    if (have.has(norm(line))) continue;
+    have.add(norm(line)); t.items.push({ id: pkId('pi'), text: line }); n++;
+  }
+  if (n) { t.updatedAt = Date.now(); save(); }
+  return n;
+}
+export function editTemplateItem(id, itemId, text) {
+  const t = getTemplate(id); if (!t) return;
+  const it = t.items.find(i => i.id === itemId); if (!it) return;
+  const v = (text || '').trim();
+  if (!v) { t.items = t.items.filter(i => i.id !== itemId); }
+  else it.text = v;
+  t.updatedAt = Date.now(); save();
+}
+export function removeTemplateItem(id, itemId) {
+  const t = getTemplate(id); if (!t) return;
+  t.items = t.items.filter(i => i.id !== itemId); t.updatedAt = Date.now(); save();
+}
+
+// Spin a trip checklist off a template (or off nothing, for a blank list).
+export function startTrip(templateId, name) {
+  const tpl = templateId ? getTemplate(templateId) : null;
+  const items = (tpl ? tpl.items : []).map(i => ({ id: pkId('ki'), text: i.text, checked: false }));
+  const trip = {
+    id: pkId('tr'), name: (name || '').trim() || (tpl ? tpl.name : 'Trip'),
+    templateId: tpl ? tpl.id : null, items, done: false,
+    createdAt: Date.now(), updatedAt: Date.now(), doneAt: null,
+  };
+  packStore().trips.push(trip); save(); return trip;
+}
+export function renameTrip(id, name) {
+  const t = getTrip(id); if (!t) return;
+  t.name = (name || '').trim() || t.name; t.updatedAt = Date.now(); save();
+}
+export function toggleTripItem(id, itemId, on) {
+  const t = getTrip(id); if (!t) return;
+  const it = t.items.find(i => i.id === itemId); if (!it) return;
+  it.checked = on === undefined ? !it.checked : !!on;
+  t.updatedAt = Date.now(); save();
+}
+export function addTripItems(id, text) {
+  const t = getTrip(id); if (!t) return 0;
+  const have = new Set(t.items.map(i => norm(i.text)));
+  let n = 0;
+  for (const line of splitLines(text)) {
+    if (have.has(norm(line))) continue;
+    have.add(norm(line)); t.items.push({ id: pkId('ki'), text: line, checked: false }); n++;
+  }
+  if (n) { t.updatedAt = Date.now(); save(); }
+  return n;
+}
+export function editTripItem(id, itemId, text) {
+  const t = getTrip(id); if (!t) return;
+  const it = t.items.find(i => i.id === itemId); if (!it) return;
+  const v = (text || '').trim();
+  if (!v) { t.items = t.items.filter(i => i.id !== itemId); }
+  else it.text = v;
+  t.updatedAt = Date.now(); save();
+}
+export function removeTripItem(id, itemId) {
+  const t = getTrip(id); if (!t) return;
+  t.items = t.items.filter(i => i.id !== itemId); t.updatedAt = Date.now(); save();
+}
+export function setTripDone(id, done) {
+  const t = getTrip(id); if (!t) return;
+  t.done = !!done; t.doneAt = done ? Date.now() : null; t.updatedAt = Date.now(); save();
+}
+export function deleteTrip(id) {
+  packStore().trips = packStore().trips.filter(t => t.id !== id); save();
+}
+// Push a trip item back into its source template so next time it's already
+// there (e.g. you realized you always need it). No-op without a template.
+export function saveTripItemToTemplate(tripId, itemId) {
+  const t = getTrip(tripId); if (!t || !t.templateId) return false;
+  const it = t.items.find(i => i.id === itemId); if (!it) return false;
+  return addTemplateItems(t.templateId, it.text) > 0;
+}
+// Reuse a past trip as a fresh checklist (everything unchecked again).
+export function reuseTrip(id, name) {
+  const src = getTrip(id); if (!src) return null;
+  const trip = {
+    id: pkId('tr'), name: (name || '').trim() || src.name,
+    templateId: src.templateId, done: false,
+    items: src.items.map(i => ({ id: pkId('ki'), text: i.text, checked: false })),
+    createdAt: Date.now(), updatedAt: Date.now(), doneAt: null,
+  };
+  packStore().trips.push(trip); save(); return trip;
+}

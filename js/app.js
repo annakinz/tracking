@@ -3,6 +3,7 @@
 import { state, save, inboxItems, memberName, tickLoops } from './store.js';
 import { initSizer, openSizer, openUniverse } from './bubbles.js';
 import { initDump, initHouse, renderLists, renderHouse, renderSettings, renderTakeover, renderDigest, refreshDumpResults, allSurfaced, openSheet, initNews, renderNewsBlob } from './views.js';
+import { initPacking, renderPacking } from './packing.js';
 import { syncNow, syncConfigured } from './hsync.js';
 
 const $ = (s) => document.querySelector(s);
@@ -17,6 +18,7 @@ function goto(view) {
     t.classList.toggle('active', t.dataset.view === view));
   if (view === 'lists') renderLists();
   if (view === 'house') renderHouse();
+  if (view === 'pack') renderPacking();
   if (view === 'settings') renderSettings();
   if (view === 'size') openUniverse();
   window.scrollTo(0, 0);
@@ -47,6 +49,7 @@ function init() {
   initHouse();
   initSizer();
   initNews();
+  initPacking();
 
   document.addEventListener('stratos:changed', () => {
     refreshBadge();
