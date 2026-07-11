@@ -6,7 +6,11 @@
 
 import { state, exactGuess } from './store.js';
 
-const MODEL = 'gemini-2.5-flash';
+// Model order: try the primary first, then fall through to the next on a 429
+// (rate limit) or 404 (model unavailable to this key). Flash-lite has the most
+// generous free-tier daily quota, which matters because the whole household
+// shares one key; full flash is the smarter fallback if lite is throttled.
+const MODELS = ['gemini-2.5-flash-lite', 'gemini-2.5-flash', 'gemini-2.0-flash'];
 const KEY_STORE = 'stratos.geminiKey';
 const TYPES = ['task', 'issue', 'supply', 'goal'];
 const TYPE_DIM = { task: 'priority', goal: 'priority', issue: 'difficulty', supply: 'restock' };
@@ -124,65 +128,96 @@ function sanitize(o) {
   return c;
 }
 
-// Shared Gemini call: parts in, schema-constrained JSON out, null on any
-// failure so callers can fall back gracefully.
-async function callGemini(parts, schema, timeoutMs = 20000) {
-  const key = getKey();
-  if (!key) { lastError = 'no API key set'; return null; }
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+// One HTTP attempt against a specific model. Returns { data } on success or
+// { err } on failure, where err carries the http status so the caller can
+// decide whether to try the next model / retry.
+async function callModel(model, key, parts, schema, timeoutMs) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${encodeURIComponent(key)}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         signal: ctrl.signal,
         body: JSON.stringify({
           contents: [{ parts }],
-          generationConfig: {
-            responseMimeType: 'application/json',
-            responseSchema: schema,
-            temperature: 0.2,
-          },
+          generationConfig: { responseMimeType: 'application/json', responseSchema: schema, temperature: 0.2 },
         }),
       });
-    if (!res.ok) {
-      lastError = await explainHttp(res);
-      console.warn('Stratos agent: Gemini returned', res.status, lastError);
-      return null;
-    }
+    if (!res.ok) return { err: await explainHttp(res, model) };
     const data = await res.json();
     const txt = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!txt) { lastError = 'Gemini returned no content (was the dump blocked as unsafe?)'; return null; }
-    const parsed = JSON.parse(txt);
-    lastError = '';
-    return parsed;
+    if (!txt) return { err: { status: 200, message: 'Gemini returned no content (was the dump blocked as unsafe?)' } };
+    return { data: JSON.parse(txt) };
   } catch (e) {
-    lastError = e.name === 'AbortError'
+    const message = e.name === 'AbortError'
       ? `timed out after ${Math.round(timeoutMs / 1000)}s (slow connection?)`
       : `couldn’t reach Google (${e.message}) — check your connection`;
-    console.warn('Stratos agent: falling back —', lastError);
-    return null;
+    return { err: { status: 0, message } };
   } finally {
     clearTimeout(timer);
   }
 }
 
-// Turn Google's error JSON into one plain sentence pointing at the actual fix.
-async function explainHttp(res) {
-  let msg = '', status = '';
-  try { const j = await res.json(); msg = j.error?.message || ''; status = j.error?.status || ''; }
-  catch (e) { try { msg = await res.text(); } catch (e2) {} }
+// Shared Gemini call: schema-constrained JSON out, null on any failure so
+// callers fall back to the local rules. Tries each model in turn; on a rate
+// limit it waits out a short server-suggested delay once before moving on, so
+// a brief free-tier spike heals itself instead of dropping to the rules.
+async function callGemini(parts, schema, timeoutMs = 20000) {
+  const key = getKey();
+  if (!key) { lastError = 'no API key set'; return null; }
+  let err = null;
+  for (const model of MODELS) {
+    let r = await callModel(model, key, parts, schema, timeoutMs);
+    if (!r.err && r.data) { lastError = ''; return r.data; }
+    err = r.err;
+    // rate-limited: if Google suggests a short wait, honour it once, then retry
+    // this same model before falling through to the next.
+    if (err.status === 429 && err.retryMs && err.retryMs <= 8000) {
+      await sleep(err.retryMs);
+      r = await callModel(model, key, parts, schema, timeoutMs);
+      if (!r.err && r.data) { lastError = ''; return r.data; }
+      err = r.err;
+    }
+    // 429 (other models likely throttled too) and 404 (try next model) fall
+    // through; anything else is not model-specific, so stop and report it.
+    if (err.status !== 429 && err.status !== 404) break;
+  }
+  lastError = err ? err.message : 'unknown error';
+  console.warn('Stratos agent: falling back —', lastError);
+  return null;
+}
+
+// Turn Google's error JSON into { status, message, retryMs } — one plain
+// sentence pointing at the actual fix, plus any server-suggested retry delay.
+async function explainHttp(res, model) {
+  let msg = '', status = '', retryMs = 0;
+  try {
+    const j = await res.json();
+    msg = j.error?.message || ''; status = j.error?.status || '';
+    const ri = (j.error?.details || []).find(d => /RetryInfo/.test(d['@type'] || ''));
+    const s = ri && /([0-9.]+)s/.exec(ri.retryDelay || '');
+    if (s) retryMs = Math.round(parseFloat(s[1]) * 1000);
+  } catch (e) { try { msg = await res.text(); } catch (e2) {} }
   const m = (msg || '').toLowerCase();
-  if (res.status === 400 && m.includes('api key not valid')) return 'that API key isn’t valid — copy it again from aistudio.google.com/apikey';
-  if (res.status === 400 && m.includes('api_key')) return 'API key problem — regenerate it at aistudio.google.com/apikey';
-  if (res.status === 403 && m.includes('referer')) return 'the key is restricted to certain websites — in Google Cloud, allow annakinz.github.io or remove the HTTP-referrer restriction';
-  if (res.status === 403 && (m.includes('service') || m.includes('disabled') || m.includes('has not been used'))) return 'the Generative Language API is turned off for this key’s project — enable it in Google Cloud, then wait a minute';
-  if (res.status === 403) return 'access denied (403)' + (msg ? ' — ' + msg : '');
-  if (res.status === 404) return 'model “' + MODEL + '” not found for this key — the key may be from a project without access';
-  if (res.status === 429) return 'rate-limited (429) — the free tier is temporarily maxed out; try again in a minute';
-  return 'Gemini error ' + res.status + (status ? ' ' + status : '') + (msg ? ' — ' + msg : '');
+  const wrap = (message) => ({ status: res.status, message, retryMs });
+  if (res.status === 400 && m.includes('api key not valid')) return wrap('that API key isn’t valid — copy it again from aistudio.google.com/apikey');
+  if (res.status === 400 && m.includes('api_key')) return wrap('API key problem — regenerate it at aistudio.google.com/apikey');
+  if (res.status === 403 && m.includes('referer')) return wrap('the key is restricted to certain websites — in Google Cloud, allow annakinz.github.io or remove the HTTP-referrer restriction');
+  if (res.status === 403 && (m.includes('service') || m.includes('disabled') || m.includes('has not been used'))) return wrap('the Generative Language API is turned off for this key’s project — enable it in Google Cloud, then wait a minute');
+  if (res.status === 403) return wrap('access denied (403)' + (msg ? ' — ' + msg : ''));
+  if (res.status === 404) return wrap('model “' + model + '” not found for this key');
+  if (res.status === 429) {
+    const perDay = m.includes('per day') || m.includes('perday') || m.includes('requests per day');
+    return wrap(perDay
+      ? 'you’ve hit Gemini’s free daily limit — filing with built-in rules until it resets (about midnight Pacific)'
+      : 'Gemini’s free tier is busy right now — try again in a moment (built-in rules filed this one)');
+  }
+  return wrap('Gemini error ' + res.status + (status ? ' ' + status : '') + (msg ? ' — ' + msg : ''));
 }
 
 // A one-shot health check for the Settings screen: does this key actually work
