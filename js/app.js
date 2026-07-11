@@ -57,6 +57,7 @@ function init() {
     if (current === 'dump') refreshDumpResults();
     if (current === 'lists') renderLists();
     if (current === 'house') renderHouse();
+    if (current === 'pack') renderPacking();
   });
 
   // tapping the hero bubble in the sizer opens its full edit sheet
@@ -65,10 +66,10 @@ function init() {
   // --- Google Drive sync scheduling ---
   let syncTimer = null;
   const trySync = () => { if (syncConfigured()) syncNow(); };
-  document.addEventListener('stratos:changed', () => {
-    clearTimeout(syncTimer);
-    syncTimer = setTimeout(trySync, 4000); // debounce pushes after edits
-  });
+  const scheduleSync = () => { clearTimeout(syncTimer); syncTimer = setTimeout(trySync, 4000); };
+  document.addEventListener('stratos:changed', scheduleSync); // debounce pushes after edits
+  // a packing inline-edit blur: push it, but no re-render (would eat the next tap)
+  document.addEventListener('stratos:packsync', scheduleSync);
   window.addEventListener('focus', trySync);
   document.addEventListener('visibilitychange', () => { if (!document.hidden) trySync(); });
   setInterval(trySync, 60000);

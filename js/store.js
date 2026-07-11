@@ -4,7 +4,7 @@ const DB_KEY = 'stratos.v1';
 
 // Build number — bump together with the service-worker CACHE in sw.js on
 // every deploy. Shown in Settings so you can confirm your phone is current.
-export const BUILD = '47';
+export const BUILD = '48';
 
 export const DIM_ORDER = ['priority', 'effort', 'difficulty', 'dread', 'restock'];
 
@@ -522,7 +522,9 @@ export function syncSnapshot(kind, me) {
     if (kind === 'shared' && it.visibility === 'shared') items[it.id] = slim(it);
     else if (kind === 'private' && it.visibility === 'private' && mine) items[it.id] = slim(it);
   }
-  return { v: 1, items, deleted: { ...tombFor(kind) }, at: Date.now() };
+  const snap = { v: 1, items, deleted: { ...tombFor(kind) }, at: Date.now() };
+  if (kind === 'shared') snap.packing = packSnapshot(); // packing rides the shared file
+  return snap;
 }
 
 // Record one "news" event (the other person added/finished a shared item).
@@ -611,6 +613,9 @@ export function applySync(kind, remote) {
       if (watch) { detectNews(it, prev, seeding); scanMessages(it, seeding); scanClaim(it, prevClaim, seeding); }
     }
   }
+  // packing lists ride the shared file too — merge them with their own
+  // per-item newest-wins so both phones can pack a trip together
+  if (kind === 'shared' && remote.packing) changed = applyPackSync(remote.packing) || changed;
   // prune tombstones + seen-news keys older than 90 days so the maps don't grow
   const cutoff = Date.now() - 90 * 86400e3;
   for (const [id, ts] of Object.entries(tomb)) if (ts < cutoff) delete tomb[id];
@@ -635,16 +640,23 @@ export function saveState() { save(); }
 // as the kids grow) and *trips* — a checklist instance spun off a template that
 // you tick as you pack and can still add to. Trips are kept after the trip so
 // you always have the old lists. Lives in state so it's backed up, exported,
-// and imported with everything else. (Not synced yet — local to this device.)
+// and imported with everything else — and it rides the shared household file,
+// so both phones share lists and can pack a trip together (see packSnapshot /
+// applyPackSync, with per-item newest-wins so simultaneous checks both stick).
 function packStore() {
   if (!state.packing) state.packing = { templates: [], trips: [] };
   if (!state.packing.templates) state.packing.templates = [];
   if (!state.packing.trips) state.packing.trips = [];
+  if (!state.packing.del) state.packing.del = {};   // list-level tombstones (id -> ts)
   return state.packing;
 }
 function pkId(p) { return p + Math.random().toString(36).slice(2, 8) + Date.now().toString(36); }
 function splitLines(text) { return String(text || '').split(/[\n,]+/).map(s => s.trim()).filter(Boolean); }
 const norm = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+// per-item timestamps let two phones pack the same trip and merge correctly:
+// `c` is a stable creation order (never changes), `at` is last-touched.
+function newPackItem(text, checked) { const now = Date.now(); return { id: pkId('ki'), text, checked: !!checked, c: now, at: now }; }
+function listDel(l) { return l.del || (l.del = {}); }
 
 export function packTemplates() {
   return packStore().templates.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -656,7 +668,7 @@ export function getTemplate(id) { return packStore().templates.find(t => t.id ==
 export function getTrip(id) { return packStore().trips.find(t => t.id === id) || null; }
 
 export function addTemplate(name) {
-  const t = { id: pkId('pt'), name: (name || '').trim() || 'Packing list', items: [], createdAt: Date.now(), updatedAt: Date.now() };
+  const t = { id: pkId('pt'), name: (name || '').trim() || 'Packing list', items: [], del: {}, createdAt: Date.now(), updatedAt: Date.now() };
   packStore().templates.push(t); save(); return t;
 }
 export function renameTemplate(id, name) {
@@ -664,7 +676,8 @@ export function renameTemplate(id, name) {
   t.name = (name || '').trim() || t.name; t.updatedAt = Date.now(); save();
 }
 export function deleteTemplate(id) {
-  packStore().templates = packStore().templates.filter(t => t.id !== id); save();
+  const P = packStore();
+  P.templates = P.templates.filter(t => t.id !== id); P.del[id] = Date.now(); save();
 }
 // Append one or many items (newline/comma separated), skipping ones already
 // present so re-dumping the core list doesn't duplicate it.
@@ -674,7 +687,7 @@ export function addTemplateItems(id, text) {
   let n = 0;
   for (const line of splitLines(text)) {
     if (have.has(norm(line))) continue;
-    have.add(norm(line)); t.items.push({ id: pkId('pi'), text: line }); n++;
+    have.add(norm(line)); t.items.push(newPackItem(line)); n++;
   }
   if (n) { t.updatedAt = Date.now(); save(); }
   return n;
@@ -683,22 +696,23 @@ export function editTemplateItem(id, itemId, text) {
   const t = getTemplate(id); if (!t) return;
   const it = t.items.find(i => i.id === itemId); if (!it) return;
   const v = (text || '').trim();
-  if (!v) { t.items = t.items.filter(i => i.id !== itemId); }
-  else it.text = v;
+  if (!v) { t.items = t.items.filter(i => i.id !== itemId); listDel(t)[itemId] = Date.now(); }
+  else { it.text = v; it.at = Date.now(); }
   t.updatedAt = Date.now(); save();
 }
 export function removeTemplateItem(id, itemId) {
   const t = getTemplate(id); if (!t) return;
-  t.items = t.items.filter(i => i.id !== itemId); t.updatedAt = Date.now(); save();
+  t.items = t.items.filter(i => i.id !== itemId); listDel(t)[itemId] = Date.now();
+  t.updatedAt = Date.now(); save();
 }
 
 // Spin a trip checklist off a template (or off nothing, for a blank list).
 export function startTrip(templateId, name) {
   const tpl = templateId ? getTemplate(templateId) : null;
-  const items = (tpl ? tpl.items : []).map(i => ({ id: pkId('ki'), text: i.text, checked: false }));
+  const items = (tpl ? tpl.items : []).map(i => newPackItem(i.text, false));
   const trip = {
     id: pkId('tr'), name: (name || '').trim() || (tpl ? tpl.name : 'Trip'),
-    templateId: tpl ? tpl.id : null, items, done: false,
+    templateId: tpl ? tpl.id : null, items, del: {}, done: false,
     createdAt: Date.now(), updatedAt: Date.now(), doneAt: null,
   };
   packStore().trips.push(trip); save(); return trip;
@@ -711,7 +725,7 @@ export function toggleTripItem(id, itemId, on) {
   const t = getTrip(id); if (!t) return;
   const it = t.items.find(i => i.id === itemId); if (!it) return;
   it.checked = on === undefined ? !it.checked : !!on;
-  t.updatedAt = Date.now(); save();
+  it.at = Date.now(); t.updatedAt = Date.now(); save();
 }
 export function addTripItems(id, text) {
   const t = getTrip(id); if (!t) return 0;
@@ -719,7 +733,7 @@ export function addTripItems(id, text) {
   let n = 0;
   for (const line of splitLines(text)) {
     if (have.has(norm(line))) continue;
-    have.add(norm(line)); t.items.push({ id: pkId('ki'), text: line, checked: false }); n++;
+    have.add(norm(line)); t.items.push(newPackItem(line, false)); n++;
   }
   if (n) { t.updatedAt = Date.now(); save(); }
   return n;
@@ -728,20 +742,22 @@ export function editTripItem(id, itemId, text) {
   const t = getTrip(id); if (!t) return;
   const it = t.items.find(i => i.id === itemId); if (!it) return;
   const v = (text || '').trim();
-  if (!v) { t.items = t.items.filter(i => i.id !== itemId); }
-  else it.text = v;
+  if (!v) { t.items = t.items.filter(i => i.id !== itemId); listDel(t)[itemId] = Date.now(); }
+  else { it.text = v; it.at = Date.now(); }
   t.updatedAt = Date.now(); save();
 }
 export function removeTripItem(id, itemId) {
   const t = getTrip(id); if (!t) return;
-  t.items = t.items.filter(i => i.id !== itemId); t.updatedAt = Date.now(); save();
+  t.items = t.items.filter(i => i.id !== itemId); listDel(t)[itemId] = Date.now();
+  t.updatedAt = Date.now(); save();
 }
 export function setTripDone(id, done) {
   const t = getTrip(id); if (!t) return;
   t.done = !!done; t.doneAt = done ? Date.now() : null; t.updatedAt = Date.now(); save();
 }
 export function deleteTrip(id) {
-  packStore().trips = packStore().trips.filter(t => t.id !== id); save();
+  const P = packStore();
+  P.trips = P.trips.filter(t => t.id !== id); P.del[id] = Date.now(); save();
 }
 // Push a trip item back into its source template so next time it's already
 // there (e.g. you realized you always need it). No-op without a template.
@@ -755,9 +771,58 @@ export function reuseTrip(id, name) {
   const src = getTrip(id); if (!src) return null;
   const trip = {
     id: pkId('tr'), name: (name || '').trim() || src.name,
-    templateId: src.templateId, done: false,
-    items: src.items.map(i => ({ id: pkId('ki'), text: i.text, checked: false })),
+    templateId: src.templateId, done: false, del: {},
+    items: src.items.map(i => newPackItem(i.text, false)),
     createdAt: Date.now(), updatedAt: Date.now(), doneAt: null,
   };
   packStore().trips.push(trip); save(); return trip;
+}
+
+// ---------- packing sync (folded into the shared household file) ----------
+// Snapshot of everything packing-related, carried inside the shared sync blob.
+export function packSnapshot() {
+  const P = packStore();
+  return { templates: P.templates, trips: P.trips, del: { ...P.del } };
+}
+// Merge one list (a=local, b=remote). name/done/meta from whichever was
+// touched last; items unioned by id with newest `at` winning per item, honoured
+// against per-item tombstones; stable order by creation stamp `c`.
+function mergeList(a, b) {
+  if (!a) return b; if (!b) return a;
+  const base = (b.updatedAt || 0) > (a.updatedAt || 0) ? b : a;
+  const del = { ...(a.del || {}), ...(b.del || {}) };
+  for (const [id, ts] of Object.entries(a.del || {})) if (!del[id] || ts > del[id]) del[id] = ts;
+  const map = new Map();
+  for (const it of a.items || []) map.set(it.id, it);
+  for (const it of b.items || []) { const ex = map.get(it.id); if (!ex || (it.at || 0) > (ex.at || 0)) map.set(it.id, it); }
+  const items = [...map.values()]
+    .filter(it => !(del[it.id] && del[it.id] >= (it.at || 0)))
+    .sort((x, y) => (x.c || 0) - (y.c || 0));
+  return { ...base, items, del };
+}
+function mergeCollection(localArr, remoteArr, listDelMap) {
+  const byId = new Map((localArr || []).map(l => [l.id, l]));
+  for (const r of remoteArr || []) byId.set(r.id, mergeList(byId.get(r.id), r));
+  return [...byId.values()]
+    .filter(x => !(listDelMap[x.id] && listDelMap[x.id] >= (x.updatedAt || 0)))
+    .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+}
+// A signature over only the fields users see, so we can tell whether a merge
+// actually changed anything (and avoid a self-perpetuating sync loop).
+function packSig(P) {
+  const sig = l => l.id + '|' + (l.name || '') + '|' + (l.done ? 1 : 0) + '|' +
+    (l.items || []).map(i => i.id + ':' + i.text + ':' + (i.checked ? 1 : 0)).join(',');
+  const col = arr => (arr || []).map(sig).sort().join(';;');
+  return col(P.templates) + '###' + col(P.trips);
+}
+export function applyPackSync(remoteP) {
+  if (!remoteP || typeof remoteP !== 'object') return false;
+  const P = packStore();
+  const before = packSig(P);
+  for (const [id, ts] of Object.entries(remoteP.del || {})) if (!P.del[id] || ts > P.del[id]) P.del[id] = ts;
+  P.templates = mergeCollection(P.templates, remoteP.templates, P.del);
+  P.trips = mergeCollection(P.trips, remoteP.trips, P.del);
+  const cut = Date.now() - 90 * 86400e3;
+  for (const [id, ts] of Object.entries(P.del)) if (ts < cut) delete P.del[id];
+  return before !== packSig(P);
 }

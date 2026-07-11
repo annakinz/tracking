@@ -13,7 +13,7 @@ import {
   startTrip, renameTrip, toggleTripItem, addTripItems, editTripItem, removeTripItem,
   setTripDone, deleteTrip, saveTripItemToTemplate, reuseTrip,
 } from './store.js';
-import { showToast } from './views.js';
+import { showToast, changed } from './views.js';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
@@ -37,7 +37,7 @@ function homeHtml() {
   const tpls = packTemplates();
 
   let h = '<h1>Packing</h1>' +
-    '<p class="hint">Reusable lists to pack from — brain-dump once, tick as you go. Edit them as the kids grow.</p>';
+    '<p class="hint">Reusable lists to pack from — brain-dump once, tick as you go. Edit them as the kids grow. Shared with your household, so you can pack a trip together.</p>';
 
   if (active.length) {
     h += '<div class="group-head">packing now</div><div class="pk-cards">';
@@ -191,64 +191,67 @@ export function initPacking() {
 
       case 'new-template': {
         const name = prompt('Name this list (e.g. “Summer trip”, “Ski trip”)');
-        if (name && name.trim()) packGoto('template', addTemplate(name).id);
+        if (name && name.trim()) { const t = addTemplate(name); packGoto('template', t.id); changed(); }
         return;
       }
       case 'pack-template': {
         const tpl = getTemplate(id); if (!tpl) return;
         const name = prompt('Name this trip', tpl.name + ' — ' + fmtDate(Date.now()));
         if (name === null) return; // cancelled
-        packGoto('trip', startTrip(id, name).id);
+        packGoto('trip', startTrip(id, name).id); changed();
         return;
       }
       case 'add-template-items': {
         const ta = $('#pkTplDump'); const n = addTemplateItems(nav.id, ta ? ta.value : '');
-        renderPacking();
+        changed();
         if (n) showToast('Added ' + n + ' item' + (n === 1 ? '' : 's') + '.');
         return;
       }
-      case 'del-tpl-item': removeTemplateItem(nav.id, id); renderPacking(); return;
+      case 'del-tpl-item': removeTemplateItem(nav.id, id); changed(); return;
       case 'del-template': {
         const t = getTemplate(nav.id);
         if (t && confirm('Delete “' + t.name + '”? Trips already started keep their own copies.')) {
-          deleteTemplate(nav.id); packGoto('home');
+          deleteTemplate(nav.id); packGoto('home'); changed();
         }
         return;
       }
 
       case 'add-trip-items': {
         const inp = $('#pkTripAdd'); const n = addTripItems(nav.id, inp ? inp.value : '');
-        renderPacking();
+        changed();
         const again = $('#pkTripAdd'); if (again) again.focus();
         if (!n) showToast('Already on the list.');
         return;
       }
-      case 'toggle-trip-item': toggleTripItem(nav.id, id); renderPacking(); return;
-      case 'del-trip-item': removeTripItem(nav.id, id); renderPacking(); return;
+      case 'toggle-trip-item': toggleTripItem(nav.id, id); changed(); return;
+      case 'del-trip-item': removeTripItem(nav.id, id); changed(); return;
       case 'save-to-template': {
         const added = saveTripItemToTemplate(nav.id, id);
+        if (added) changed();
         showToast(added ? 'Added to your list for next time.' : 'Already on your list.');
         return;
       }
-      case 'finish-trip': setTripDone(nav.id, true); renderPacking(); return;
-      case 'reopen-trip': setTripDone(nav.id, false); renderPacking(); return;
+      case 'finish-trip': setTripDone(nav.id, true); changed(); return;
+      case 'reopen-trip': setTripDone(nav.id, false); changed(); return;
       case 'reuse-trip': {
         const src = getTrip(nav.id); if (!src) return;
         const name = prompt('Name the new trip', src.name);
         if (name === null) return;
-        packGoto('trip', reuseTrip(nav.id, name).id);
+        packGoto('trip', reuseTrip(nav.id, name).id); changed();
         return;
       }
       case 'copy-trip': { const t = getTrip(nav.id); if (t) copyTrip(t); return; }
       case 'del-trip': {
         const t = getTrip(nav.id);
-        if (t && confirm('Delete “' + t.name + '”? This can’t be undone.')) { deleteTrip(nav.id); packGoto('home'); }
+        if (t && confirm('Delete “' + t.name + '”? This can’t be undone.')) { deleteTrip(nav.id); packGoto('home'); changed(); }
         return;
       }
     }
   });
 
-  // inline edits: item text and list/trip names save on blur (focusout bubbles)
+  // inline edits: item text and list/trip names save on blur (focusout bubbles).
+  // We persist + queue a sync but DON'T re-render here — rebuilding the DOM on
+  // blur would eat the very tap (a checkbox, another row) that caused the blur.
   view.addEventListener('focusout', (e) => {
     const el = e.target.closest('.pk-edit, .pk-edit-name');
     if (!el) return;
@@ -258,6 +261,8 @@ export function initPacking() {
     else if (kind === 'trip-item') editTripItem(nav.id, id, text);
     else if (kind === 'tpl-name') renameTemplate(nav.id, text);
     else if (kind === 'trip-name') renameTrip(nav.id, text);
+    else return;
+    document.dispatchEvent(new CustomEvent('stratos:packsync')); // sync, no re-render
   });
 
   // Enter in the quick-add or on a contenteditable item commits without a newline
@@ -265,7 +270,7 @@ export function initPacking() {
     if (e.key !== 'Enter') return;
     if (e.target.id === 'pkTripAdd') {
       e.preventDefault();
-      const n = addTripItems(nav.id, e.target.value); renderPacking();
+      const n = addTripItems(nav.id, e.target.value); changed();
       const again = $('#pkTripAdd'); if (again) again.focus();
       if (!n) showToast('Already on the list.');
     } else if (e.target.classList && e.target.classList.contains('pk-edit')) {
