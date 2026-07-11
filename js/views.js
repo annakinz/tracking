@@ -1381,7 +1381,8 @@ export function renderSettings() {
     btn.disabled = true; btn.textContent = 'Testing…'; st.textContent = '';
     st.classList.remove('sync-err');
     const r = await testKey();
-    st.textContent = (r.ok ? '✓ ' : '⚠ ') + r.message;
+    st.innerHTML = (r.ok ? '✓ ' : '⚠ ') + esc(r.message) +
+      (!r.ok && r.raw ? '<br><span style="opacity:.7;font-size:11px">Google says: ' + esc(r.raw) + '</span>' : '');
     st.classList.toggle('sync-err', !r.ok);
     btn.disabled = false; btn.textContent = 'Test key';
   };

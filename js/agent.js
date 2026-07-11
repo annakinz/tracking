@@ -25,7 +25,9 @@ export const setKey = (k) => {
 // toast and the Settings "Test" button so a misconfigured key is diagnosable
 // instead of a silent "unreachable".
 let lastError = '';
+let lastRaw = '';           // Google's own words + quota id, for the details line
 export const lastAgentError = () => lastError;
+export const lastAgentRaw = () => lastRaw;
 
 // What this family actually does — completed and recurring items teach the
 // model the household's patterns (which bags are laundry, what piles up where).
@@ -173,38 +175,47 @@ async function callGemini(parts, schema, timeoutMs = 20000) {
   let err = null;
   for (const model of MODELS) {
     let r = await callModel(model, key, parts, schema, timeoutMs);
-    if (!r.err && r.data) { lastError = ''; return r.data; }
+    if (!r.err && r.data) { lastError = ''; lastRaw = ''; return r.data; }
     err = r.err;
     // rate-limited: if Google suggests a short wait, honour it once, then retry
     // this same model before falling through to the next.
     if (err.status === 429 && err.retryMs && err.retryMs <= 8000) {
       await sleep(err.retryMs);
       r = await callModel(model, key, parts, schema, timeoutMs);
-      if (!r.err && r.data) { lastError = ''; return r.data; }
+      if (!r.err && r.data) { lastError = ''; lastRaw = ''; return r.data; }
       err = r.err;
     }
-    // 429 (other models likely throttled too) and 404 (try next model) fall
-    // through; anything else is not model-specific, so stop and report it.
+    // A hard quota/billing 429 (no free tier for this key) will fail identically
+    // on every model — stop rather than burn all three. Per-minute/per-day
+    // throttles and 404s fall through to try the next model.
+    if (err.status === 429 && err.hardQuota) break;
     if (err.status !== 429 && err.status !== 404) break;
   }
   lastError = err ? err.message : 'unknown error';
-  console.warn('Stratos agent: falling back —', lastError);
+  lastRaw = err ? (err.raw || '') : '';
+  console.warn('Stratos agent: falling back —', lastError, '·', lastRaw);
   return null;
 }
 
-// Turn Google's error JSON into { status, message, retryMs } — one plain
-// sentence pointing at the actual fix, plus any server-suggested retry delay.
+// Turn Google's error JSON into { status, message, retryMs, raw, hardQuota } —
+// one plain sentence pointing at the actual fix, plus the server's own words
+// (raw) and a flag for a hard quota/billing wall that won't differ by model.
 async function explainHttp(res, model) {
-  let msg = '', status = '', retryMs = 0;
+  let msg = '', status = '', retryMs = 0, quotaId = '';
   try {
     const j = await res.json();
     msg = j.error?.message || ''; status = j.error?.status || '';
-    const ri = (j.error?.details || []).find(d => /RetryInfo/.test(d['@type'] || ''));
+    const details = j.error?.details || [];
+    const ri = details.find(d => /RetryInfo/.test(d['@type'] || ''));
     const s = ri && /([0-9.]+)s/.exec(ri.retryDelay || '');
     if (s) retryMs = Math.round(parseFloat(s[1]) * 1000);
+    const qf = details.find(d => /QuotaFailure/.test(d['@type'] || ''));
+    const v = qf && qf.violations && qf.violations[0];
+    quotaId = (v && (v.quotaId || v.quotaMetric)) || '';
   } catch (e) { try { msg = await res.text(); } catch (e2) {} }
-  const m = (msg || '').toLowerCase();
-  const wrap = (message) => ({ status: res.status, message, retryMs });
+  const m = (msg || '').toLowerCase(), q = quotaId.toLowerCase();
+  const raw = (msg || '') + (quotaId ? ' [' + quotaId + ']' : '') + (retryMs ? ' (retry ' + Math.ceil(retryMs / 1000) + 's)' : '');
+  const wrap = (message, extra) => ({ status: res.status, message, retryMs, raw, ...extra });
   if (res.status === 400 && m.includes('api key not valid')) return wrap('that API key isn’t valid — copy it again from aistudio.google.com/apikey');
   if (res.status === 400 && m.includes('api_key')) return wrap('API key problem — regenerate it at aistudio.google.com/apikey');
   if (res.status === 403 && m.includes('referer')) return wrap('the key is restricted to certain websites — in Google Cloud, allow annakinz.github.io or remove the HTTP-referrer restriction');
@@ -212,10 +223,14 @@ async function explainHttp(res, model) {
   if (res.status === 403) return wrap('access denied (403)' + (msg ? ' — ' + msg : ''));
   if (res.status === 404) return wrap('model “' + model + '” not found for this key');
   if (res.status === 429) {
-    const perDay = m.includes('per day') || m.includes('perday') || m.includes('requests per day');
-    return wrap(perDay
-      ? 'you’ve hit Gemini’s free daily limit — filing with built-in rules until it resets (about midnight Pacific)'
-      : 'Gemini’s free tier is busy right now — try again in a moment (built-in rules filed this one)');
+    const perMinute = /per\s*minute|perminute/.test(m) || /perminute/.test(q);
+    const perDay = /per\s*day|perday|requests per day/.test(m) || /perday/.test(q);
+    // "check your plan / billing" with no per-minute/day metric = the free tier
+    // isn't giving this key any quota (region not covered, or billing needed).
+    const hardQuota = !perMinute && (m.includes('billing') || m.includes('check your plan') || m.includes('not available') || (m.includes('quota') && !perDay && !quotaId));
+    if (hardQuota) return wrap('this key has no free Gemini quota — the free tier may not be offered in your region, or the project needs billing enabled. See ai.google.dev/pricing. (Ebbe making a fresh key at aistudio.google.com/apikey may also help.)', { hardQuota: true });
+    if (perDay) return wrap('hit Gemini’s free daily limit — using built-in rules until it resets (~midnight Pacific)');
+    return wrap('Gemini’s free tier is busy (per-minute limit)' + (retryMs ? ' — try again in ~' + Math.ceil(retryMs / 1000) + 's' : ' — try again shortly') + '; built-in rules filed this one');
   }
   return wrap('Gemini error ' + res.status + (status ? ' ' + status : '') + (msg ? ' — ' + msg : ''));
 }
@@ -229,7 +244,7 @@ export async function testKey() {
     { type: 'OBJECT', properties: { ok: { type: 'BOOLEAN' } }, required: ['ok'] },
     15000);
   return out ? { ok: true, message: 'Working — Gemini is filing your dumps.' }
-             : { ok: false, message: lastError || 'unknown error' };
+             : { ok: false, message: lastError || 'unknown error', raw: lastRaw };
 }
 
 // Returns classified items, or null (caller falls back to heuristics).
