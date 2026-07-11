@@ -12,6 +12,7 @@ import {
   addTemplate, renameTemplate, deleteTemplate, addTemplateItems, editTemplateItem, removeTemplateItem,
   startTrip, renameTrip, toggleTripItem, addTripItems, editTripItem, removeTripItem,
   setTripDone, deleteTrip, saveTripItemToTemplate, reuseTrip,
+  setPackListOrder, sortPackList,
 } from './store.js';
 import { showToast, changed } from './views.js';
 
@@ -28,6 +29,9 @@ const progress = (trip) => {
   const total = trip.items.length, done = trip.items.filter(i => i.checked).length;
   return { total, done, pct: total ? Math.round(done / total * 100) : 0 };
 };
+const normText = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+const ordOf = (i) => (i.ord != null ? i.ord : (i.c != null ? i.c : 0));
+const byOrd = (arr) => arr.slice().sort((a, b) => (ordOf(a) - ordOf(b)) || ((a.c || 0) - (b.c || 0)));
 
 // ---------- screens ----------
 function homeHtml() {
@@ -83,15 +87,24 @@ function homeHtml() {
 
 function itemRowHtml(text, itemId, kind, opts = {}) {
   // kind: 'tpl' (plain, editable) or 'trip' (checkbox + editable)
+  // A drag handle reorders; checked trip items aren't draggable (order is moot).
+  const grip = opts.checked ? '<span class="pk-grip off"> </span>'
+    : '<span class="pk-grip" data-grip aria-label="drag to reorder">⠿</span>';
   const box = kind === 'trip'
     ? '<button class="pk-check' + (opts.checked ? ' on' : '') + '" data-action="toggle-trip-item" data-id="' + itemId + '" aria-label="pack">' + (opts.checked ? '✓' : '') + '</button>'
-    : '<span class="pk-dot">•</span>';
+    : '';
   const save = (kind === 'trip' && opts.templated)
     ? '<button class="pk-save" data-action="save-to-template" data-id="' + itemId + '" title="keep on the list for next time">⤒</button>' : '';
-  return '<div class="pk-item' + (opts.checked ? ' done' : '') + '">' + box +
+  return '<div class="pk-item' + (opts.checked ? ' done' : '') + '" data-id="' + itemId + '">' + grip + box +
     '<span class="pk-text pk-edit" contenteditable="true" data-kind="' + kind + '-item" data-id="' + itemId + '">' + esc(text) + '</span>' +
     save +
     '<button class="pk-x" data-action="del-' + kind + '-item" data-id="' + itemId + '" aria-label="remove">✕</button></div>';
+}
+
+// A small "sort A–Z" control shown above a list
+function sortBar() {
+  return '<div class="pk-sortbar"><button class="chip small" data-action="sort-az">A–Z</button>' +
+    '<span class="hint tiny">drag ⠿ to reorder</span></div>';
 }
 
 function templateHtml(t) {
@@ -102,8 +115,9 @@ function templateHtml(t) {
   if (!t.items.length) {
     h += '<p class="hint">Empty for now — dump the things you always bring above.</p>';
   } else {
-    h += '<div class="pk-list">';
-    for (const i of t.items) h += itemRowHtml(i.text, i.id, 'tpl');
+    if (t.items.length > 1) h += sortBar();
+    h += '<div class="pk-list" data-sortable>';
+    for (const i of byOrd(t.items)) h += itemRowHtml(i.text, i.id, 'tpl');
     h += '</div>';
   }
   h += '<div class="pk-actions">' +
@@ -114,8 +128,13 @@ function templateHtml(t) {
 
 function tripHtml(t) {
   const p = progress(t);
-  const unchecked = t.items.filter(i => !i.checked);
-  const checked = t.items.filter(i => i.checked);
+  const unchecked = byOrd(t.items.filter(i => !i.checked));
+  const checked = byOrd(t.items.filter(i => i.checked));
+  // ⤒ ("keep for next time") only makes sense for items not already on the
+  // source template — so hide it on the ones that came from the template.
+  const tpl = t.templateId ? getTemplate(t.templateId) : null;
+  const inTemplate = new Set((tpl ? tpl.items : []).map(i => normText(i.text)));
+  const canSave = (i) => !!t.templateId && !inTemplate.has(normText(i.text));
   let h = '<button class="pk-back" data-action="home">‹ Packing</button>' +
     '<input class="pk-title pk-edit-name" id="pkTripName" value="' + esc(t.name) + '" data-kind="trip-name" aria-label="trip name">' +
     '<div class="pk-trip-head"><span class="pk-count big">' + p.done + ' / ' + p.total + ' packed</span>' +
@@ -128,13 +147,14 @@ function tripHtml(t) {
     h += '<p class="hint">Nothing here yet — add items above.</p>';
   }
   if (unchecked.length) {
-    h += '<div class="pk-list">';
-    for (const i of unchecked) h += itemRowHtml(i.text, i.id, 'trip', { checked: false, templated: !!t.templateId });
+    if (unchecked.length > 1) h += sortBar();
+    h += '<div class="pk-list" data-sortable>';
+    for (const i of unchecked) h += itemRowHtml(i.text, i.id, 'trip', { checked: false, templated: canSave(i) });
     h += '</div>';
   }
   if (checked.length) {
     h += '<div class="pk-packed-head">✓ packed (' + checked.length + ')</div><div class="pk-list packed">';
-    for (const i of checked) h += itemRowHtml(i.text, i.id, 'trip', { checked: true, templated: !!t.templateId });
+    for (const i of checked) h += itemRowHtml(i.text, i.id, 'trip', { checked: true, templated: canSave(i) });
     h += '</div>';
   }
 
@@ -223,6 +243,15 @@ export function initPacking() {
         if (!n) showToast('Already on the list.');
         return;
       }
+      case 'sort-az': {
+        if (nav.screen === 'template') sortPackList('template', nav.id);
+        else if (nav.screen === 'trip') {
+          const t = getTrip(nav.id); if (!t) return;
+          sortPackList('trip', nav.id, t.items.filter(i => !i.checked).map(i => i.id));
+        }
+        changed();
+        return;
+      }
       case 'toggle-trip-item': toggleTripItem(nav.id, id); changed(); return;
       case 'del-trip-item': removeTripItem(nav.id, id); changed(); return;
       case 'save-to-template': {
@@ -277,4 +306,40 @@ export function initPacking() {
       e.preventDefault(); e.target.blur();
     }
   });
+
+  // drag-to-reorder: grab the ⠿ handle and move a row within its list. We
+  // reinsert the row live as you cross each neighbour, then persist on release.
+  let drag = null;
+  view.addEventListener('pointerdown', (e) => {
+    const grip = e.target.closest('[data-grip]'); if (!grip) return;
+    const row = grip.closest('.pk-item');
+    const list = row && row.closest('[data-sortable]');
+    if (!row || !list) return;
+    e.preventDefault();
+    const startIds = [...list.querySelectorAll('.pk-item')].map(r => r.dataset.id);
+    drag = { row, list, startIds };
+    row.classList.add('dragging');
+    try { grip.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+  view.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const others = [...drag.list.querySelectorAll('.pk-item:not(.dragging)')];
+    let placed = false;
+    for (const r of others) {
+      const box = r.getBoundingClientRect();
+      if (e.clientY < box.top + box.height / 2) { drag.list.insertBefore(drag.row, r); placed = true; break; }
+    }
+    if (!placed) drag.list.appendChild(drag.row);
+  });
+  const endDrag = () => {
+    if (!drag) return;
+    drag.row.classList.remove('dragging');
+    const ids = [...drag.list.querySelectorAll('.pk-item')].map(r => r.dataset.id);
+    const moved = ids.join(',') !== drag.startIds.join(',');
+    const kind = nav.screen === 'template' ? 'template' : 'trip';
+    drag = null;
+    if (moved) { setPackListOrder(kind, nav.id, ids); changed(); }
+  };
+  view.addEventListener('pointerup', endDrag);
+  view.addEventListener('pointercancel', endDrag);
 }

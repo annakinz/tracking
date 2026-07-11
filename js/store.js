@@ -4,7 +4,7 @@ const DB_KEY = 'stratos.v1';
 
 // Build number — bump together with the service-worker CACHE in sw.js on
 // every deploy. Shown in Settings so you can confirm your phone is current.
-export const BUILD = '48';
+export const BUILD = '49';
 
 export const DIM_ORDER = ['priority', 'effort', 'difficulty', 'dread', 'restock'];
 
@@ -654,9 +654,11 @@ function pkId(p) { return p + Math.random().toString(36).slice(2, 8) + Date.now(
 function splitLines(text) { return String(text || '').split(/[\n,]+/).map(s => s.trim()).filter(Boolean); }
 const norm = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
 // per-item timestamps let two phones pack the same trip and merge correctly:
-// `c` is a stable creation order (never changes), `at` is last-touched.
-function newPackItem(text, checked) { const now = Date.now(); return { id: pkId('ki'), text, checked: !!checked, c: now, at: now }; }
+// `c` is a stable creation order (never changes), `at` is last-touched, `ord`
+// is the sort position (defaults to creation order; changed by drag / A–Z).
+function newPackItem(text, checked) { const now = Date.now(); return { id: pkId('ki'), text, checked: !!checked, c: now, at: now, ord: now }; }
 function listDel(l) { return l.del || (l.del = {}); }
+const ordOf = (i) => (i.ord != null ? i.ord : (i.c != null ? i.c : 0));
 
 export function packTemplates() {
   return packStore().templates.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
@@ -778,6 +780,32 @@ export function reuseTrip(id, name) {
   packStore().trips.push(trip); save(); return trip;
 }
 
+// Reorder: assign each listed item its position as `ord` (bumping `at` so the
+// new order wins in a merge). Only the ids passed are repositioned — for a trip
+// that's the to-pack items; checked ones keep their place.
+export function setPackListOrder(kind, id, orderedIds) {
+  const l = kind === 'template' ? getTemplate(id) : getTrip(id);
+  if (!l) return;
+  const pos = new Map(orderedIds.map((x, i) => [x, i]));
+  const now = Date.now();
+  let changed = false;
+  for (const it of l.items) {
+    if (!pos.has(it.id)) continue;
+    const nx = pos.get(it.id);
+    if (it.ord !== nx) { it.ord = nx; it.at = now; changed = true; }
+  }
+  if (changed) { l.updatedAt = now; save(); }
+  return changed;
+}
+// One-tap A–Z of a list (or of a trip's unchecked items, if scopeIds given).
+export function sortPackList(kind, id, scopeIds) {
+  const l = kind === 'template' ? getTemplate(id) : getTrip(id);
+  if (!l) return;
+  const pool = scopeIds ? l.items.filter(i => scopeIds.includes(i.id)) : l.items.slice();
+  const ids = pool.sort((a, b) => norm(a.text).localeCompare(norm(b.text))).map(i => i.id);
+  return setPackListOrder(kind, id, ids);
+}
+
 // ---------- packing sync (folded into the shared household file) ----------
 // Snapshot of everything packing-related, carried inside the shared sync blob.
 export function packSnapshot() {
@@ -797,7 +825,7 @@ function mergeList(a, b) {
   for (const it of b.items || []) { const ex = map.get(it.id); if (!ex || (it.at || 0) > (ex.at || 0)) map.set(it.id, it); }
   const items = [...map.values()]
     .filter(it => !(del[it.id] && del[it.id] >= (it.at || 0)))
-    .sort((x, y) => (x.c || 0) - (y.c || 0));
+    .sort((x, y) => (ordOf(x) - ordOf(y)) || ((x.c || 0) - (y.c || 0)));
   return { ...base, items, del };
 }
 function mergeCollection(localArr, remoteArr, listDelMap) {
