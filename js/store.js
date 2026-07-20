@@ -4,7 +4,7 @@ const DB_KEY = 'stratos.v1';
 
 // Build number — bump together with the service-worker CACHE in sw.js on
 // every deploy. Shown in Settings so you can confirm your phone is current.
-export const BUILD = '49';
+export const BUILD = '50';
 
 export const DIM_ORDER = ['priority', 'effort', 'difficulty', 'dread', 'restock'];
 
@@ -656,7 +656,7 @@ const norm = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
 // per-item timestamps let two phones pack the same trip and merge correctly:
 // `c` is a stable creation order (never changes), `at` is last-touched, `ord`
 // is the sort position (defaults to creation order; changed by drag / A–Z).
-function newPackItem(text, checked) { const now = Date.now(); return { id: pkId('ki'), text, checked: !!checked, c: now, at: now, ord: now }; }
+function newPackItem(text, checked, group) { const now = Date.now(); return { id: pkId('ki'), text, checked: !!checked, group: group || null, c: now, at: now, ord: now }; }
 function listDel(l) { return l.del || (l.del = {}); }
 const ordOf = (i) => (i.ord != null ? i.ord : (i.c != null ? i.c : 0));
 
@@ -711,7 +711,7 @@ export function removeTemplateItem(id, itemId) {
 // Spin a trip checklist off a template (or off nothing, for a blank list).
 export function startTrip(templateId, name) {
   const tpl = templateId ? getTemplate(templateId) : null;
-  const items = (tpl ? tpl.items : []).map(i => newPackItem(i.text, false));
+  const items = (tpl ? tpl.items : []).map(i => newPackItem(i.text, false, i.group)); // groups carry over
   const trip = {
     id: pkId('tr'), name: (name || '').trim() || (tpl ? tpl.name : 'Trip'),
     templateId: tpl ? tpl.id : null, items, del: {}, done: false,
@@ -774,7 +774,7 @@ export function reuseTrip(id, name) {
   const trip = {
     id: pkId('tr'), name: (name || '').trim() || src.name,
     templateId: src.templateId, done: false, del: {},
-    items: src.items.map(i => newPackItem(i.text, false)),
+    items: src.items.map(i => newPackItem(i.text, false, i.group)), // groups carry over
     createdAt: Date.now(), updatedAt: Date.now(), doneAt: null,
   };
   packStore().trips.push(trip); save(); return trip;
@@ -796,6 +796,21 @@ export function setPackListOrder(kind, id, orderedIds) {
   }
   if (changed) { l.updatedAt = now; save(); }
   return changed;
+}
+// Put an item into a named group (or null to ungroup). Bumps `at` so it wins.
+export function setPackItemGroup(kind, id, itemId, group) {
+  const l = kind === 'template' ? getTemplate(id) : getTrip(id);
+  if (!l) return;
+  const it = l.items.find(i => i.id === itemId); if (!it) return;
+  const g = (group || '').trim() || null;
+  if (it.group === g) return;
+  it.group = g; it.at = Date.now(); l.updatedAt = Date.now(); save();
+}
+// Distinct group names present in a list (for the group picker).
+export function packListGroups(kind, id) {
+  const l = kind === 'template' ? getTemplate(id) : getTrip(id);
+  if (!l) return [];
+  return [...new Set(l.items.map(i => i.group).filter(Boolean))].sort((a, b) => a.localeCompare(b));
 }
 // One-tap A–Z of a list (or of a trip's unchecked items, if scopeIds given).
 export function sortPackList(kind, id, scopeIds) {
@@ -839,7 +854,7 @@ function mergeCollection(localArr, remoteArr, listDelMap) {
 // actually changed anything (and avoid a self-perpetuating sync loop).
 function packSig(P) {
   const sig = l => l.id + '|' + (l.name || '') + '|' + (l.done ? 1 : 0) + '|' +
-    (l.items || []).map(i => i.id + ':' + i.text + ':' + (i.checked ? 1 : 0)).join(',');
+    (l.items || []).map(i => i.id + ':' + i.text + ':' + (i.checked ? 1 : 0) + ':' + (i.group || '') + ':' + ordOf(i)).join(',');
   const col = arr => (arr || []).map(sig).sort().join(';;');
   return col(P.templates) + '###' + col(P.trips);
 }

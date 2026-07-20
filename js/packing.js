@@ -12,9 +12,9 @@ import {
   addTemplate, renameTemplate, deleteTemplate, addTemplateItems, editTemplateItem, removeTemplateItem,
   startTrip, renameTrip, toggleTripItem, addTripItems, editTripItem, removeTripItem,
   setTripDone, deleteTrip, saveTripItemToTemplate, reuseTrip,
-  setPackListOrder, sortPackList,
+  setPackListOrder, sortPackList, setPackItemGroup, packListGroups,
 } from './store.js';
-import { showToast, changed } from './views.js';
+import { showToast, changed, catSwatch } from './views.js';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
@@ -95,16 +95,42 @@ function itemRowHtml(text, itemId, kind, opts = {}) {
     : '';
   const save = (kind === 'trip' && opts.templated)
     ? '<button class="pk-save" data-action="save-to-template" data-id="' + itemId + '" title="keep on the list for next time">⤒</button>' : '';
+  const grp = '<button class="pk-gchip" data-action="group-item" data-id="' + itemId + '" title="put in a group">⊞</button>';
   return '<div class="pk-item' + (opts.checked ? ' done' : '') + '" data-id="' + itemId + '">' + grip + box +
     '<span class="pk-text pk-edit" contenteditable="true" data-kind="' + kind + '-item" data-id="' + itemId + '">' + esc(text) + '</span>' +
-    save +
+    grp + save +
     '<button class="pk-x" data-action="del-' + kind + '-item" data-id="' + itemId + '" aria-label="remove">✕</button></div>';
 }
 
 // A small "sort A–Z" control shown above a list
 function sortBar() {
   return '<div class="pk-sortbar"><button class="chip small" data-action="sort-az">A–Z</button>' +
-    '<span class="hint tiny">drag ⠿ to reorder</span></div>';
+    '<span class="hint tiny">drag ⠿ to reorder · ⊞ to group</span></div>';
+}
+
+// Render a set of items either flat or, when any of them carry a group, inside
+// faint colour-coded cards sorted by group name. Each card (and the ungrouped
+// tray) is a drop target, so dragging a row into another card regroups it.
+function listBodyHtml(items, kind, opts) {
+  const sorted = byOrd(items);
+  const rows = (arr) => arr.map(i => itemRowHtml(i.text, i.id, kind, { ...opts(i) })).join('');
+  if (!sorted.some(i => i.group)) {
+    return '<div class="pk-list" data-sortable data-group="">' + rows(sorted) + '</div>';
+  }
+  const groups = new Map(), loose = [];
+  for (const i of sorted) { if (i.group) { (groups.get(i.group) || groups.set(i.group, []).get(i.group)).push(i); } else loose.push(i); }
+  let h = '';
+  for (const name of [...groups.keys()].sort((a, b) => a.localeCompare(b))) {
+    const sw = catSwatch(name);
+    h += '<div class="pk-group" style="background:' + sw.bg + '55;border-color:' + sw.bg + '">' +
+      '<div class="pk-group-head" style="color:' + sw.deep + '">' + esc(name) + '</div>' +
+      '<div class="pk-list" data-sortable data-group="' + esc(name) + '">' + rows(groups.get(name)) + '</div></div>';
+  }
+  if (loose.length) {
+    h += '<div class="pk-group loose"><div class="pk-group-head">Ungrouped</div>' +
+      '<div class="pk-list" data-sortable data-group="">' + rows(loose) + '</div></div>';
+  }
+  return h;
 }
 
 function templateHtml(t) {
@@ -116,9 +142,7 @@ function templateHtml(t) {
     h += '<p class="hint">Empty for now — dump the things you always bring above.</p>';
   } else {
     if (t.items.length > 1) h += sortBar();
-    h += '<div class="pk-list" data-sortable>';
-    for (const i of byOrd(t.items)) h += itemRowHtml(i.text, i.id, 'tpl');
-    h += '</div>';
+    h += listBodyHtml(t.items, 'tpl', () => ({}));
   }
   h += '<div class="pk-actions">' +
     '<button class="primary big" data-action="pack-template" data-id="' + t.id + '">🧳 Pack for a trip</button>' +
@@ -148,9 +172,7 @@ function tripHtml(t) {
   }
   if (unchecked.length) {
     if (unchecked.length > 1) h += sortBar();
-    h += '<div class="pk-list" data-sortable>';
-    for (const i of unchecked) h += itemRowHtml(i.text, i.id, 'trip', { checked: false, templated: canSave(i) });
-    h += '</div>';
+    h += listBodyHtml(unchecked, 'trip', (i) => ({ checked: false, templated: canSave(i) }));
   }
   if (checked.length) {
     h += '<div class="pk-packed-head">✓ packed (' + checked.length + ')</div><div class="pk-list packed">';
@@ -243,6 +265,20 @@ export function initPacking() {
         if (!n) showToast('Already on the list.');
         return;
       }
+      case 'group-item': {
+        const kind = nav.screen === 'template' ? 'template' : 'trip';
+        const list = kind === 'template' ? getTemplate(nav.id) : getTrip(nav.id);
+        const it = list && list.items.find(x => x.id === id); if (!it) return;
+        const existing = packListGroups(kind, nav.id);
+        const msg = 'Group name for this item' +
+          (existing.length ? ' — existing: ' + existing.join(', ') : '') +
+          '.\n(Leave blank to ungroup.)';
+        const g = prompt(msg, it.group || '');
+        if (g === null) return;
+        setPackItemGroup(kind, nav.id, id, g);
+        changed();
+        return;
+      }
       case 'sort-az': {
         if (nav.screen === 'template') sortPackList('template', nav.id);
         else if (nav.screen === 'trip') {
@@ -307,38 +343,49 @@ export function initPacking() {
     }
   });
 
-  // drag-to-reorder: grab the ⠿ handle and move a row within its list. We
-  // reinsert the row live as you cross each neighbour, then persist on release.
+  // drag-to-reorder / regroup: grab the ⠿ handle and move a row. It follows the
+  // finger across group cards (each is a drop target); on release we persist the
+  // new order and, if it landed in a different card, its new group.
   let drag = null;
+  const domSnapshot = () => [...view.querySelectorAll('[data-sortable]')]
+    .flatMap(c => [...c.querySelectorAll('.pk-item')].map(r => (c.dataset.group || '') + '/' + r.dataset.id)).join(',');
   view.addEventListener('pointerdown', (e) => {
     const grip = e.target.closest('[data-grip]'); if (!grip) return;
     const row = grip.closest('.pk-item');
-    const list = row && row.closest('[data-sortable]');
-    if (!row || !list) return;
+    if (!row || !row.closest('[data-sortable]')) return;
     e.preventDefault();
-    const startIds = [...list.querySelectorAll('.pk-item')].map(r => r.dataset.id);
-    drag = { row, list, startIds };
+    drag = { row, start: domSnapshot() };
     row.classList.add('dragging');
     try { grip.setPointerCapture(e.pointerId); } catch (_) {}
   });
   view.addEventListener('pointermove', (e) => {
     if (!drag) return;
-    const others = [...drag.list.querySelectorAll('.pk-item:not(.dragging)')];
+    const under = document.elementFromPoint(e.clientX, e.clientY); // .dragging has pointer-events:none
+    const target = (under && under.closest('[data-sortable]')) || drag.row.closest('[data-sortable]');
+    if (!target) return;
+    const others = [...target.querySelectorAll('.pk-item:not(.dragging)')];
     let placed = false;
     for (const r of others) {
       const box = r.getBoundingClientRect();
-      if (e.clientY < box.top + box.height / 2) { drag.list.insertBefore(drag.row, r); placed = true; break; }
+      if (e.clientY < box.top + box.height / 2) { target.insertBefore(drag.row, r); placed = true; break; }
     }
-    if (!placed) drag.list.appendChild(drag.row);
+    if (!placed) target.appendChild(drag.row);
   });
   const endDrag = () => {
     if (!drag) return;
     drag.row.classList.remove('dragging');
-    const ids = [...drag.list.querySelectorAll('.pk-item')].map(r => r.dataset.id);
-    const moved = ids.join(',') !== drag.startIds.join(',');
-    const kind = nav.screen === 'template' ? 'template' : 'trip';
+    const moved = domSnapshot() !== drag.start;
     drag = null;
-    if (moved) { setPackListOrder(kind, nav.id, ids); changed(); }
+    if (!moved) return;
+    // read the DOM back into group + order (no-ops are skipped inside the store)
+    const kind = nav.screen === 'template' ? 'template' : 'trip';
+    for (const c of view.querySelectorAll('[data-sortable]')) {
+      const group = c.dataset.group || '';
+      const ids = [...c.querySelectorAll('.pk-item')].map(r => r.dataset.id);
+      for (const iid of ids) setPackItemGroup(kind, nav.id, iid, group);
+      setPackListOrder(kind, nav.id, ids);
+    }
+    changed();
   };
   view.addEventListener('pointerup', endDrag);
   view.addEventListener('pointercancel', endDrag);

@@ -872,3 +872,13 @@ body.dump-focus #dumpText {
 .pk-grip.off { visibility: hidden; }
 .pk-item.dragging { background: var(--card); box-shadow: 0 6px 18px rgba(0,0,0,.16); border-radius: 12px;
   opacity: .96; position: relative; z-index: 5; }
+
+/* packing: grouped colour cards */
+.pk-group { border: 1.5px solid var(--line); border-radius: 16px; padding: 6px 12px 4px; margin: 8px 0; }
+.pk-group.loose { background: transparent; border-style: dashed; }
+.pk-group-head { font-family: var(--display); font-size: 15px; font-weight: 600; padding: 6px 2px 2px; }
+.pk-group.loose .pk-group-head { color: var(--faint); }
+.pk-group .pk-item { border-bottom-color: rgba(0,0,0,.06); }
+.pk-group .pk-item:last-child { border-bottom: 0; }
+.pk-gchip { color: var(--faint); font-size: 15px; padding: 2px 6px; flex: none; }
+.pk-item.dragging { pointer-events: none; }
