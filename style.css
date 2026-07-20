@@ -900,3 +900,27 @@ body.dump-focus #dumpText {
 .sugg-add { border-style: dashed; color: var(--lilac-deep); font-size: 16px; }
 .sugg-when { flex: none; font-size: 11.5px; color: var(--faint); white-space: nowrap; }
 .shop-item.sugg .shop-title { color: var(--muted); }
+
+/* packing: group picker sheet + multi-select */
+#pkPickWrap { position: fixed; inset: 0; z-index: 60; }
+#pkPickShade { position: absolute; inset: 0; background: rgba(35,38,46,.35); }
+#pkPickCard {
+  position: absolute; left: 12px; right: 12px; bottom: calc(var(--tabs-h) + 12px);
+  background: var(--card); border-radius: 20px; padding: 16px;
+  box-shadow: 0 10px 34px rgba(35,38,46,.28), 0 3px 0 var(--line);
+}
+#pkPickTitle { font-family: var(--display); font-weight: 600; font-size: 16px; margin-bottom: 10px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#pkPickChips { display: flex; flex-wrap: wrap; gap: 8px; }
+.pkp-chip { display: inline-flex; align-items: center; gap: 7px; }
+.pkp-chip.on { outline: 2.5px solid var(--lilac-deep); }
+.pkp-chip.dim { color: var(--muted); }
+.pkp-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.pk-pen { font-size: 12px; opacity: .55; }
+.pk-selcount { font-size: 13.5px; color: var(--muted); }
+.pk-selcount b { color: var(--lilac-deep); }
+.pk-item.selrow { cursor: pointer; }
+.pk-item.selrow.selon { background: var(--lilac); border-radius: 12px; margin: 2px -4px; padding-left: 8px; padding-right: 8px; border-bottom: 0; }
+.pk-selbox { width: 26px; height: 26px; flex: none; border: 2px dashed var(--faint); border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; color: var(--lilac-deep); font-weight: 800; }
+.pk-item.selon .pk-selbox { border-style: solid; border-color: var(--lilac-deep); }

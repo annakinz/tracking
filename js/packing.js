@@ -12,7 +12,7 @@ import {
   addTemplate, renameTemplate, deleteTemplate, addTemplateItems, editTemplateItem, removeTemplateItem,
   startTrip, renameTrip, toggleTripItem, addTripItems, editTripItem, removeTripItem,
   setTripDone, deleteTrip, saveTripItemToTemplate, reuseTrip,
-  setPackListOrder, sortPackList, setPackItemGroup, packListGroups,
+  setPackListOrder, sortPackList, setPackItemGroup, packListGroups, renamePackGroup,
 } from './store.js';
 import { showToast, changed, catSwatch } from './views.js';
 import { packGroupOf } from './classify.js';
@@ -23,7 +23,11 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
 
 // which screen the Pack tab is showing
 let nav = { screen: 'home', id: null };
-export function packGoto(screen, id) { nav = { screen, id: id || null }; renderPacking(); window.scrollTo(0, 0); }
+// multi-select mode: pick several rows, then group them in one go
+let selMode = false;
+const selIds = new Set();
+function exitSel() { selMode = false; selIds.clear(); }
+export function packGoto(screen, id) { nav = { screen, id: id || null }; exitSel(); renderPacking(); window.scrollTo(0, 0); }
 
 const fmtDate = (ms) => { try { return new Date(ms).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }); } catch (e) { return ''; } };
 const progress = (trip) => {
@@ -88,6 +92,13 @@ function homeHtml() {
 
 function itemRowHtml(text, itemId, kind, opts = {}) {
   // kind: 'tpl' (plain, editable) or 'trip' (checkbox + editable)
+  // In select mode the row is a plain toggle target — no editing, no actions.
+  if (selMode) {
+    const on = selIds.has(itemId);
+    return '<div class="pk-item selrow' + (on ? ' selon' : '') + (opts.checked ? ' done' : '') + '" data-id="' + itemId + '" data-selrow>' +
+      '<span class="pk-selbox">' + (on ? '✓' : '') + '</span>' +
+      '<span class="pk-text">' + esc(text) + '</span></div>';
+  }
   // A drag handle reorders; checked trip items aren't draggable (order is moot).
   const grip = opts.checked ? '<span class="pk-grip off"> </span>'
     : '<span class="pk-grip" data-grip aria-label="drag to reorder">⠿</span>';
@@ -103,11 +114,17 @@ function itemRowHtml(text, itemId, kind, opts = {}) {
     '<button class="pk-x" data-action="del-' + kind + '-item" data-id="' + itemId + '" aria-label="remove">✕</button></div>';
 }
 
-// Controls above a list: A–Z sort and one-tap auto-grouping
+// Controls above a list: A–Z sort, one-tap auto-grouping, multi-select
 function sortBar() {
+  if (selMode) {
+    return '<div class="pk-sortbar"><span class="pk-selcount"><b>' + selIds.size + '</b> selected</span>' +
+      '<button class="chip small" data-action="sel-group"' + (selIds.size ? '' : ' disabled') + '>⊞ Group…</button>' +
+      '<button class="chip small" data-action="sel-cancel">✕ Done</button></div>';
+  }
   return '<div class="pk-sortbar"><button class="chip small" data-action="sort-az">A–Z</button>' +
     '<button class="chip small" data-action="auto-group">✦ Auto-group</button>' +
-    '<span class="hint tiny">drag ⠿ to reorder · ⊞ to group</span></div>';
+    '<button class="chip small" data-action="sel-start">☑ Select</button>' +
+    '<span class="hint tiny">drag ⠿ · ⊞ group</span></div>';
 }
 
 // Render a set of items either flat or, when any of them carry a group, inside
@@ -125,7 +142,7 @@ function listBodyHtml(items, kind, opts) {
   for (const name of [...groups.keys()].sort((a, b) => a.localeCompare(b))) {
     const sw = catSwatch(name);
     h += '<div class="pk-group" style="background:' + sw.bg + '55;border-color:' + sw.bg + '">' +
-      '<div class="pk-group-head" style="color:' + sw.deep + '">' + esc(name) + '</div>' +
+      '<button class="pk-group-head" data-action="rename-group" data-group="' + esc(name) + '" style="color:' + sw.deep + '" title="rename group">' + esc(name) + ' <span class="pk-pen">✎</span></button>' +
       '<div class="pk-list" data-sortable data-group="' + esc(name) + '">' + rows(groups.get(name)) + '</div></div>';
   }
   if (loose.length) {
@@ -208,6 +225,43 @@ export function renderPacking() {
   view.innerHTML = homeHtml();
 }
 
+// ---------- group picker: existing groups as tappable chips ----------
+function closeGroupPicker() { const w = $('#pkPickWrap'); if (w) w.hidden = true; }
+function openGroupPicker(itemIds) {
+  const kind = nav.screen === 'template' ? 'template' : 'trip';
+  const list = kind === 'template' ? getTemplate(nav.id) : getTrip(nav.id);
+  if (!list || !itemIds.length) return;
+  const wrap = $('#pkPickWrap'), chips = $('#pkPickChips'), title = $('#pkPickTitle');
+  if (!wrap) return;
+  const one = itemIds.length === 1 ? list.items.find(i => i.id === itemIds[0]) : null;
+  const current = one ? one.group : null;
+  title.textContent = one ? one.text : itemIds.length + ' items';
+  const anyGrouped = itemIds.some(iid => { const it = list.items.find(i => i.id === iid); return it && it.group; });
+
+  const apply = (g) => {
+    for (const iid of itemIds) setPackItemGroup(kind, nav.id, iid, g);
+    closeGroupPicker(); exitSel(); changed();
+  };
+  chips.innerHTML = '';
+  const mk = (label, fn, cls, dot) => {
+    const b = document.createElement('button');
+    b.className = 'chip pkp-chip' + (cls ? ' ' + cls : '');
+    if (dot) b.innerHTML = '<span class="pkp-dot" style="background:' + dot + '"></span>' + esc(label);
+    else b.textContent = label;
+    b.onclick = fn;
+    chips.appendChild(b);
+  };
+  for (const g of packListGroups(kind, nav.id)) {
+    mk(g, () => apply(g), g === current ? 'on' : '', catSwatch(g).dot);
+  }
+  mk('＋ New group…', () => {
+    const g = prompt('Name the new group');
+    if (g && g.trim()) apply(g.trim());
+  });
+  if (anyGrouped) mk('Ungroup', () => apply(null), 'dim');
+  wrap.hidden = false;
+}
+
 // ---------- interaction (delegated on the persistent container) ----------
 function tripText(t) {
   return t.items.map(i => (i.checked ? '☑ ' : '☐ ') + i.text).join('\n');
@@ -222,8 +276,20 @@ async function copyTrip(t) {
 export function initPacking() {
   const view = $('#view-pack');
   if (!view) return;
+  const shade = $('#pkPickShade');
+  if (shade) shade.onclick = closeGroupPicker;
 
   view.addEventListener('click', (e) => {
+    // select mode: tapping a row toggles it in/out of the selection
+    if (selMode) {
+      const row = e.target.closest('[data-selrow]');
+      if (row) {
+        const rid = row.dataset.id;
+        if (selIds.has(rid)) selIds.delete(rid); else selIds.add(rid);
+        renderPacking();
+        return;
+      }
+    }
     const btn = e.target.closest('[data-action]');
     if (!btn) return;
     const a = btn.dataset.action, id = btn.dataset.id;
@@ -267,20 +333,20 @@ export function initPacking() {
         if (!n) showToast('Already on the list.');
         return;
       }
-      case 'group-item': {
+      case 'group-item': openGroupPicker([id]); return;
+      case 'rename-group': {
         const kind = nav.screen === 'template' ? 'template' : 'trip';
-        const list = kind === 'template' ? getTemplate(nav.id) : getTrip(nav.id);
-        const it = list && list.items.find(x => x.id === id); if (!it) return;
-        const existing = packListGroups(kind, nav.id);
-        const msg = 'Group name for this item' +
-          (existing.length ? ' — existing: ' + existing.join(', ') : '') +
-          '.\n(Leave blank to ungroup.)';
-        const g = prompt(msg, it.group || '');
-        if (g === null) return;
-        setPackItemGroup(kind, nav.id, id, g);
+        const from = btn.dataset.group;
+        const to = prompt('Rename group “' + from + '” (blank to dissolve — items go back to Ungrouped)', from);
+        if (to === null) return;
+        const n = renamePackGroup(kind, nav.id, from, to);
         changed();
+        if (n && !to.trim()) showToast('Dissolved “' + from + '” — ' + n + ' item' + (n === 1 ? '' : 's') + ' ungrouped.');
         return;
       }
+      case 'sel-start': selMode = true; selIds.clear(); renderPacking(); return;
+      case 'sel-cancel': exitSel(); renderPacking(); return;
+      case 'sel-group': if (selIds.size) openGroupPicker([...selIds]); return;
       case 'auto-group': {
         const kind = nav.screen === 'template' ? 'template' : 'trip';
         const list = kind === 'template' ? getTemplate(nav.id) : getTrip(nav.id);

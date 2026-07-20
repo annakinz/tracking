@@ -4,7 +4,7 @@ const DB_KEY = 'stratos.v1';
 
 // Build number — bump together with the service-worker CACHE in sw.js on
 // every deploy. Shown in Settings so you can confirm your phone is current.
-export const BUILD = '53';
+export const BUILD = '54';
 
 export const DIM_ORDER = ['priority', 'effort', 'difficulty', 'dread', 'restock'];
 
@@ -855,6 +855,19 @@ export function setPackItemGroup(kind, id, itemId, group) {
   const g = (group || '').trim() || null;
   if (it.group === g) return;
   it.group = g; it.at = Date.now(); l.updatedAt = Date.now(); save();
+}
+// Rename a group across the whole list (blank `to` dissolves it — items go
+// back to Ungrouped). Bumps each member's `at` so the rename wins in a merge.
+export function renamePackGroup(kind, id, from, to) {
+  const l = kind === 'template' ? getTemplate(id) : getTrip(id);
+  if (!l || !from) return 0;
+  const g = (to || '').trim() || null;
+  if (g === from) return 0;
+  const now = Date.now();
+  let n = 0;
+  for (const it of l.items) if (it.group === from) { it.group = g; it.at = now; n++; }
+  if (n) { l.updatedAt = now; save(); }
+  return n;
 }
 // Distinct group names present in a list (for the group picker).
 export function packListGroups(kind, id) {
