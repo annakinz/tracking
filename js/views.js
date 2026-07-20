@@ -8,7 +8,7 @@ import {
   claimItem, snoozeItem, isSnoozed, setDailyChore, finishedToday, openLoad, digestSeenToday, markDigestSeen,
   backupList, restoreBackup,
 } from './store.js';
-import { parseDump, classifyOne } from './classify.js';
+import { parseDump, classifyOne, aisleOf } from './classify.js';
 import { agentClassify, agentPhotoTasks, getKey, setKey, testKey, lastAgentError } from './agent.js';
 import { openSizer } from './bubbles.js';
 import * as hsync from './hsync.js';
@@ -719,6 +719,21 @@ export function initHouse() {
 }
 
 let houseSourceVal = 'all';
+let houseModeVal = 'list';   // 'list' | 'shop' (checklist grouped by store aisle)
+
+// what belongs on a shopping run (vs. house *tasks*)
+const shoppable = (i) => i.type === 'supply' || i.category === 'groceries' || i.category === 'supplies';
+// running low enough (or urgent/overdue enough) that missing it would hurt
+function isCritical(i) {
+  const r = uOf(i, 'restock');
+  if (r != null && r >= 5) return true;              // Almost out / Out!
+  const p = uOf(i, 'priority');
+  if (p != null && p >= 5) return true;              // Urgent / On fire
+  return gravityBoost(i) >= 1.5;                     // due date breathing down
+}
+// aisle walk order — roughly how you move through a store, not A–Z
+const AISLE_ORDER = ['Produce', 'Bread & bakery', 'Meat & fish', 'Dairy & eggs', 'Frozen',
+  'Pantry', 'Snacks & sweets', 'Drinks', 'Household', 'Personal care', 'Other'];
 
 export function renderHouse() {
   const body = $('#houseBody');
@@ -726,6 +741,18 @@ export function renderHouse() {
   const items = state.items.filter(i => i.scope === 'house' && visibleTo(i, state.profile));
   let active = items.filter(i => i.status !== 'done');
   const done = items.filter(i => i.status === 'done').sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
+
+  // list ↔ shop toggle (shop = a store-run checklist over groceries & supplies)
+  const seg = document.createElement('div');
+  seg.className = 'segmented';
+  for (const [mode, label] of [['list', '☰ List'], ['shop', '🛒 Shop']]) {
+    const b = document.createElement('button');
+    b.className = 'seg' + (houseModeVal === mode ? ' on' : '');
+    b.textContent = label;
+    b.onclick = () => { houseModeVal = mode; renderHouse(); };
+    seg.appendChild(b);
+  }
+  body.appendChild(seg);
 
   // store-run mode: standing in Netto, filter to the Netto loop
   const sources = [...new Set(active.map(i => i.source).filter(Boolean))].sort();
@@ -744,6 +771,8 @@ export function renderHouse() {
     houseSourceVal = 'all';
   }
   if (houseSourceVal !== 'all') active = active.filter(i => i.source === houseSourceVal);
+
+  if (houseModeVal === 'shop') { renderShop(body, active, done); return; }
 
   const groups = { groceries: [], supplies: [], other: [] };
   for (const i of active) (groups[i.category] || groups.other).push(i);
@@ -778,6 +807,94 @@ export function renderHouse() {
   }
   if (!active.length && !done.length) {
     body.innerHTML = '<div class="empty"><div class="empty-art">⌂</div><p>Add groceries, supplies, house tasks…</p></div>';
+  }
+}
+
+// Shop mode: the store run as a checklist. Groceries & supplies grouped by
+// aisle (things you'd find together), walked in store order; the critical ones
+// (almost out / out / urgent / overdue) rise to the top of their aisle with an
+// ember highlight so they can't be missed. Ticking = bought → "in the cart".
+function renderShop(body, active, done) {
+  const shopItems = active.filter(shoppable);
+  const today = new Date().toDateString();
+  const inCart = done.filter(i => shoppable(i) && i.doneAt && new Date(i.doneAt).toDateString() === today);
+
+  if (!shopItems.length && !inCart.length) {
+    const e = document.createElement('div');
+    e.className = 'empty';
+    e.innerHTML = '<div class="empty-art">🛒</div><p>Nothing to shop for. Add groceries above!</p>';
+    body.appendChild(e);
+    return;
+  }
+
+  const nCrit = shopItems.filter(isCritical).length;
+  const sum = document.createElement('p');
+  sum.className = 'hint';
+  sum.textContent = shopItems.length + ' to get' + (nCrit ? ' · ' + nCrit + ' critical ⚑' : '');
+  body.appendChild(sum);
+
+  // group by aisle, walk the store in order
+  const byAisle = new Map();
+  for (const i of shopItems) {
+    const a = aisleOf(i.title);
+    if (!byAisle.has(a)) byAisle.set(a, []);
+    byAisle.get(a).push(i);
+  }
+  const aisles = [...byAisle.keys()].sort((a, b) => {
+    const ia = AISLE_ORDER.indexOf(a), ib = AISLE_ORDER.indexOf(b);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
+
+  const restockLabel = (i) => {
+    const r = uOf(i, 'restock');
+    if (r == null) return '⚑';
+    return state.dims.restock.strata[Math.min(Math.floor(r), state.dims.restock.strata.length - 1)].label;
+  };
+  const row = (i, checked) => {
+    const crit = !checked && isCritical(i);
+    const el = document.createElement('div');
+    el.className = 'shop-item' + (checked ? ' done' : '') + (crit ? ' crit' : '');
+    el.innerHTML =
+      '<button class="pk-check' + (checked ? ' on' : '') + '" aria-label="got it">' + (checked ? '✓' : '') + '</button>' +
+      '<span class="shop-title">' + esc(i.title) + '</span>' +
+      (crit ? '<span class="shop-flag">⚑ ' + esc(restockLabel(i)) + '</span>' : '') +
+      (i.source && houseSourceVal === 'all' ? '<span class="minichip">@ ' + esc(i.source) + '</span>' : '');
+    el.querySelector('.pk-check').onclick = () => {
+      markDone(i.id, !checked);
+      changed();
+      if (!checked) showToast('Got ' + i.title, 'Undo', () => { markDone(i.id, false); changed(); });
+    };
+    el.querySelector('.shop-title').onclick = () => openSheet(i.id);
+    return el;
+  };
+
+  for (const a of aisles) {
+    const arr = byAisle.get(a);
+    // critical first, then A–Z — the must-gets lead each aisle
+    arr.sort((x, y) => (isCritical(y) - isCritical(x)) || x.title.localeCompare(y.title));
+    const sw = catSwatch(a);
+    const card = document.createElement('div');
+    card.className = 'pk-group shop-aisle';
+    card.style.background = sw.bg + '55';
+    card.style.borderColor = sw.bg;
+    const head = document.createElement('div');
+    head.className = 'pk-group-head';
+    head.style.color = sw.deep;
+    head.textContent = a + ' · ' + arr.length;
+    card.appendChild(head);
+    for (const i of arr) card.appendChild(row(i, false));
+    body.appendChild(card);
+  }
+
+  if (inCart.length) {
+    const h = document.createElement('div');
+    h.className = 'pk-packed-head';
+    h.textContent = '✓ in the cart (' + inCart.length + ')';
+    body.appendChild(h);
+    const tray = document.createElement('div');
+    tray.className = 'shop-cart';
+    for (const i of inCart) tray.appendChild(row(i, true));
+    body.appendChild(tray);
   }
 }
 

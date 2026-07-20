@@ -134,6 +134,41 @@ function matchSupply(t) {
   return false;
 }
 
+// ---------- store aisles ----------
+// Rough store-geography grouping for Shop mode: things you'd find together.
+// First matching section wins; multi-word phrases are checked before single
+// words so "ice cream" lands in Frozen, not Dairy via "cream".
+const AISLES = [
+  ['Produce', 'apple apples banana bananas orange oranges lemon lemons lime limes grapes berries strawberries blueberries raspberries melon watermelon avocado avocados onion onions garlic potato potatoes tomato tomatoes lettuce salad spinach kale carrot carrots cucumber peppers pepper broccoli cauliflower zucchini squash mushroom mushrooms herbs cilantro parsley basil dill ginger fruit fruits vegetable vegetables leek leeks cabbage beets celery corn scallions'],
+  ['Frozen', 'frozen icecream ice-cream "ice cream" popsicles "fish sticks" "frozen pizza"'],
+  ['Dairy & eggs', 'milk buttermilk cream "whipping cream" cheese yogurt yoghurt skyr butter eggs egg margarine "cream cheese" "cottage cheese" kefir'],
+  ['Meat & fish', 'chicken beef pork bacon sausage sausages ham salami turkey lamb mince meatballs fish salmon cod tuna shrimp prawns herring "deli meat" hotdogs frikadeller'],
+  ['Bread & bakery', 'bread rolls buns bagels baguette croissant croissants rugbrød tortillas pita "hot dog buns" cake pastry pastries'],
+  ['Drinks', 'juice soda seltzer "sparkling water" water coffee tea beer wine kombucha lemonade cocoa "oat milk" "almond milk" "soy milk"'],
+  ['Snacks & sweets', 'snacks chips crackers cookies candy chocolate licorice gum popcorn "granola bars" nuts raisins "dried fruit" biscuits sweets marzipan'],
+  ['Pantry', 'pasta noodles rice oats oatmeal cereal granola flour sugar yeast salt oil vinegar ketchup mustard mayo mayonnaise salsa jam honey "peanut butter" nutella beans lentils chickpeas tofu broth stock soup "canned tomatoes" "tomato paste" spices cinnamon vanilla "baking powder" "baking soda" couscous quinoa tahini "soy sauce" curry pesto'],
+  ['Household', '"toilet paper" "paper towels" detergent "dish soap" dishwasher "trash bags" sponges sponge foil "plastic wrap" ziploc batteries "light bulb" lightbulb candles matches laundry napkins "vacuum bags" cleaner bleach'],
+  ['Personal care', 'soap shampoo conditioner toothpaste toothbrush floss deodorant lotion sunscreen "band-aids" bandaids tissues wipes diapers razors "cotton pads" vitamins painkillers plasters medicine'],
+];
+// parse each aisle's spec into { name, words:Set, phrases:[] } once
+const AISLE_DEFS = AISLES.map(([name, spec]) => {
+  const phrases = [], words = new Set();
+  for (const m of spec.match(/"[^"]+"|\S+/g) || []) {
+    if (m.startsWith('"')) phrases.push(m.slice(1, -1).replace(/"$/, ''));
+    else words.add(m);
+  }
+  return { name, words, phrases };
+});
+export function aisleOf(title) {
+  const t = ' ' + String(title || '').toLowerCase() + ' ';
+  const words = t.split(/[^a-zæøåöä-]+/).filter(Boolean);
+  // phrases beat single words across ALL aisles — "peanut butter" is Pantry
+  // even though "butter" alone is Dairy
+  for (const a of AISLE_DEFS) for (const p of a.phrases) if (t.includes(p)) return a.name;
+  for (const a of AISLE_DEFS) for (const w of words) if (a.words.has(w)) return a.name;
+  return 'Other';
+}
+
 function isGrocery(t) {
   const words = t.split(/\s+/);
   return words.length <= 4 && words.some(w => GROCERY.has(w.replace(/[^a-zæøå]/g, '')));

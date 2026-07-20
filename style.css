@@ -882,3 +882,14 @@ body.dump-focus #dumpText {
 .pk-group .pk-item:last-child { border-bottom: 0; }
 .pk-gchip { color: var(--faint); font-size: 15px; padding: 2px 6px; flex: none; }
 .pk-item.dragging { pointer-events: none; }
+
+/* house: shop mode (store-run checklist) */
+#view-house .segmented { margin-bottom: 10px; }
+.shop-item { display: flex; align-items: center; gap: 10px; padding: 8px 4px; border-bottom: 1px solid rgba(0,0,0,.06); }
+.shop-aisle .shop-item:last-child { border-bottom: 0; }
+.shop-title { flex: 1; font-size: 16px; line-height: 1.3; }
+.shop-item.done .shop-title { text-decoration: line-through; color: var(--faint); }
+.shop-item.crit { background: var(--ember-tint); border-radius: 12px; padding-left: 8px; padding-right: 8px; margin: 2px -4px; box-shadow: 0 2px 0 var(--ember-shadow); border-bottom: 0; }
+.shop-item.crit .shop-title { font-weight: 700; }
+.shop-flag { flex: none; font-size: 12px; font-weight: 800; color: var(--ember); letter-spacing: .02em; }
+.shop-cart { opacity: .75; }
