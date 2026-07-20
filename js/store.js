@@ -4,7 +4,7 @@ const DB_KEY = 'stratos.v1';
 
 // Build number — bump together with the service-worker CACHE in sw.js on
 // every deploy. Shown in Settings so you can confirm your phone is current.
-export const BUILD = '51';
+export const BUILD = '52';
 
 export const DIM_ORDER = ['priority', 'effort', 'difficulty', 'dread', 'restock'];
 
@@ -215,6 +215,56 @@ export function tickLoops() {
 }
 
 export function getItem(id) { return state.items.find(i => i.id === id); }
+
+// ---------- shopping ----------
+const shoppableItem = (i) => i.scope === 'house' && !i.parent &&
+  (i.type === 'supply' || i.category === 'groceries' || i.category === 'supplies');
+
+// Buying is more than done: the pantry is full again, so the restock dial
+// snaps back to "Stocked". The previous reading is stashed so unticking
+// ("didn't buy it after all") puts the dial back where it was.
+export function buyItem(id, bought = true) {
+  const item = getItem(id);
+  if (!item) return;
+  if (bought) {
+    item.restockPrev = item.dims.restock || null;
+    const s0 = state.dims.restock.strata[0]; // "Stocked"
+    item.dims.restock = { s: s0.id, f: 0.5, at: Date.now() };
+  } else if ('restockPrev' in item) {
+    if (item.restockPrev) item.dims.restock = item.restockPrev;
+    else delete item.dims.restock;
+    delete item.restockPrev;
+  }
+  markDone(id, bought); // touches + saves
+}
+
+// "Commonly bought, probably out": done groceries/supplies you've bought at
+// least twice whose rhythm says the pantry is likely empty again (≥80% of the
+// cycle since the last buy). Items with a *learned* rhythm mostly reawaken on
+// their own (tickLoops) — this tray catches the young loops (2 buys, no
+// learned `every` yet) and anything else that slipped through. Most-overdue
+// first, capped so it stays a gentle nudge rather than a second list.
+export function shopSuggestions() {
+  const now = Date.now();
+  const out = [];
+  for (const i of state.items) {
+    if (i.status !== 'done' || !shoppableItem(i) || !visibleTo(i, state.profile)) continue;
+    const hist = i.loop?.history || [];
+    if (hist.length < 2 && !i.loop?.every) continue;   // bought once — not "commonly"
+    let everyD = i.loop?.every;
+    if (!everyD) {
+      const gaps = [];
+      for (let k = 1; k < hist.length; k++) gaps.push((hist[k] - hist[k - 1]) / 86400e3);
+      gaps.sort((a, b) => a - b);
+      everyD = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 0;
+    }
+    if (!everyD || everyD < 0.5) continue;
+    const last = i.doneAt || hist[hist.length - 1] || 0;
+    const ratio = ((now - last) / 86400e3) / everyD;
+    if (ratio >= 0.8) out.push({ item: i, everyD: Math.max(1, Math.round(everyD)), daysAgo: Math.round((now - last) / 86400e3), ratio });
+  }
+  return out.sort((a, b) => b.ratio - a.ratio).slice(0, 8);
+}
 
 export function deleteItem(id) {
   const now = Date.now();

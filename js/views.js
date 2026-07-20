@@ -6,7 +6,7 @@ import {
   inboxItems, childrenOf, exportJSON, importJSON, resetAll, DIM_ORDER, BUILD,
   newsItems, reviewNews, clearNews, otherUsers, partnerName,
   claimItem, snoozeItem, isSnoozed, setDailyChore, finishedToday, openLoad, digestSeenToday, markDigestSeen,
-  backupList, restoreBackup,
+  backupList, restoreBackup, buyItem, shopSuggestions,
 } from './store.js';
 import { parseDump, classifyOne, aisleOf } from './classify.js';
 import { agentClassify, agentPhotoTasks, getKey, setKey, testKey, lastAgentError } from './agent.js';
@@ -818,8 +818,9 @@ function renderShop(body, active, done) {
   const shopItems = active.filter(shoppable);
   const today = new Date().toDateString();
   const inCart = done.filter(i => shoppable(i) && i.doneAt && new Date(i.doneAt).toDateString() === today);
+  const anySugg = shopSuggestions().some(s => houseSourceVal === 'all' || s.item.source === houseSourceVal);
 
-  if (!shopItems.length && !inCart.length) {
+  if (!shopItems.length && !inCart.length && !anySugg) {
     const e = document.createElement('div');
     e.className = 'empty';
     e.innerHTML = '<div class="empty-art">🛒</div><p>Nothing to shop for. Add groceries above!</p>';
@@ -827,11 +828,13 @@ function renderShop(body, active, done) {
     return;
   }
 
-  const nCrit = shopItems.filter(isCritical).length;
-  const sum = document.createElement('p');
-  sum.className = 'hint';
-  sum.textContent = shopItems.length + ' to get' + (nCrit ? ' · ' + nCrit + ' critical ⚑' : '');
-  body.appendChild(sum);
+  if (shopItems.length) {
+    const nCrit = shopItems.filter(isCritical).length;
+    const sum = document.createElement('p');
+    sum.className = 'hint';
+    sum.textContent = shopItems.length + ' to get' + (nCrit ? ' · ' + nCrit + ' critical ⚑' : '');
+    body.appendChild(sum);
+  }
 
   // group by aisle, walk the store in order
   const byAisle = new Map();
@@ -860,9 +863,10 @@ function renderShop(body, active, done) {
       (crit ? '<span class="shop-flag">⚑ ' + esc(restockLabel(i)) + '</span>' : '') +
       (i.source && houseSourceVal === 'all' ? '<span class="minichip">@ ' + esc(i.source) + '</span>' : '');
     el.querySelector('.pk-check').onclick = () => {
-      markDone(i.id, !checked);
+      // buying auto-resets the restock dial to "Stocked"; unticking restores it
+      buyItem(i.id, !checked);
       changed();
-      if (!checked) showToast('Got ' + i.title, 'Undo', () => { markDone(i.id, false); changed(); });
+      if (!checked) showToast('Got ' + i.title + ' — marked Stocked', 'Undo', () => { buyItem(i.id, false); changed(); });
     };
     el.querySelector('.shop-title').onclick = () => openSheet(i.id);
     return el;
@@ -883,6 +887,37 @@ function renderShop(body, active, done) {
     head.textContent = a + ' · ' + arr.length;
     card.appendChild(head);
     for (const i of arr) card.appendChild(row(i, false));
+    body.appendChild(card);
+  }
+
+  // "commonly bought — probably out": rhythms say these are likely empty
+  // again, but they're not on the list. One tap adds some or all.
+  const sugg = shopSuggestions().filter(s => houseSourceVal === 'all' || s.item.source === houseSourceVal);
+  if (sugg.length) {
+    const readd = (i) => {
+      const c = { ...classifyOne(i.raw || i.title), scope: 'house', category: i.category, type: i.type };
+      addItem(c); // reactivates the same item and feeds its rhythm
+    };
+    const card = document.createElement('div');
+    card.className = 'pk-group shop-sugg';
+    const head = document.createElement('div');
+    head.className = 'pk-group-head';
+    head.innerHTML = '☁ probably out? <button class="chip small" id="shopAddAll">＋ Add all</button>';
+    card.appendChild(head);
+    for (const s of sugg) {
+      const el = document.createElement('div');
+      el.className = 'shop-item sugg';
+      el.innerHTML = '<button class="pk-check sugg-add" aria-label="add to list">＋</button>' +
+        '<span class="shop-title">' + esc(s.item.title) + '</span>' +
+        '<span class="sugg-when">~every ' + s.everyD + 'd · ' + s.daysAgo + 'd ago</span>';
+      el.querySelector('.sugg-add').onclick = () => { readd(s.item); changed(); showToast('Added ' + s.item.title); };
+      card.appendChild(el);
+    }
+    head.querySelector('#shopAddAll').onclick = () => {
+      for (const s of sugg) readd(s.item);
+      changed();
+      showToast('Added ' + sugg.length + ' item' + (sugg.length === 1 ? '' : 's'));
+    };
     body.appendChild(card);
   }
 

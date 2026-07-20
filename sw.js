@@ -1,4 +1,4 @@
-const CACHE = 'stratos-v51';
+const CACHE = 'stratos-v52';
 const ASSETS = [
   './', 'index.html', 'style.css', 'manifest.webmanifest', 'icon.svg',
   'fonts/fraunces.woff2', 'fonts/fraunces-italic.woff2', 'fonts/outfit.woff2',
