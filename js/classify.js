@@ -150,23 +150,53 @@ const AISLES = [
   ['Household', '"toilet paper" "paper towels" detergent "dish soap" dishwasher "trash bags" sponges sponge foil "plastic wrap" ziploc batteries "light bulb" lightbulb candles matches laundry napkins "vacuum bags" cleaner bleach'],
   ['Personal care', 'soap shampoo conditioner toothpaste toothbrush floss deodorant lotion sunscreen "band-aids" bandaids tissues wipes diapers razors "cotton pads" vitamins painkillers plasters medicine'],
 ];
-// parse each aisle's spec into { name, words:Set, phrases:[] } once
-const AISLE_DEFS = AISLES.map(([name, spec]) => {
-  const phrases = [], words = new Set();
-  for (const m of spec.match(/"[^"]+"|\S+/g) || []) {
-    if (m.startsWith('"')) phrases.push(m.slice(1, -1).replace(/"$/, ''));
-    else words.add(m);
-  }
-  return { name, words, phrases };
-});
-export function aisleOf(title) {
+// parse a [name, spec] table into { name, words:Set, phrases:[] } once
+function parseSpecs(table) {
+  return table.map(([name, spec]) => {
+    const phrases = [], words = new Set();
+    for (const m of spec.match(/"[^"]+"|\S+/g) || []) {
+      if (m.startsWith('"')) phrases.push(m.slice(1, -1).replace(/"$/, ''));
+      else words.add(m);
+    }
+    return { name, words, phrases };
+  });
+}
+// phrases beat single words across ALL sections — "peanut butter" is Pantry
+// even though "butter" alone is Dairy
+function matchSpecs(defs, title) {
   const t = ' ' + String(title || '').toLowerCase() + ' ';
   const words = t.split(/[^a-zæøåöä-]+/).filter(Boolean);
-  // phrases beat single words across ALL aisles — "peanut butter" is Pantry
-  // even though "butter" alone is Dairy
-  for (const a of AISLE_DEFS) for (const p of a.phrases) if (t.includes(p)) return a.name;
-  for (const a of AISLE_DEFS) for (const w of words) if (a.words.has(w)) return a.name;
-  return 'Other';
+  for (const a of defs) for (const p of a.phrases) if (t.includes(p)) return a.name;
+  for (const a of defs) for (const w of words) if (a.words.has(w)) return a.name;
+  return null;
+}
+const AISLE_DEFS = parseSpecs(AISLES);
+export function aisleOf(title) { return matchSpecs(AISLE_DEFS, title) || 'Other'; }
+
+// ---------- packing groups ----------
+// Auto-categorizer for packing lists: suitcase geography instead of store
+// geography. Anything mentioning a child's name goes to Kids first — that
+// beats every keyword ("Kiva's charger" is Kids, not Electronics).
+const PACK_GROUPS = [
+  ['Electronics', 'ipad ipads tablet phone phones charger chargers "charging cable" "charging cables" cable cables "power adapter" "power adapters" adapter adapters powerbank "power bank" headphones earbuds airpods kindle "e-reader" ereader laptop macbook camera gopro "memory card" batteries "travel plug" plug plugs switch nintendo controller drone'],
+  ['Documents & money', 'passport passports tickets ticket visa visas "boarding pass" "boarding passes" insurance id "id cards" wallet cash money "credit card" "credit cards" "travel card" itinerary reservations "drivers license" license bookings currency'],
+  ['Health & meds', 'inhaler inhalers medicine medicines medication medications meds painkillers ibuprofen paracetamol antihistamine "band-aids" bandaids plasters "first-aid" "first aid" thermometer vitamins prescription prescriptions "motion sickness" seasickness epipen "hand sanitizer"'],
+  ['Toiletries', 'toothbrush toothbrushes toothpaste floss shampoo conditioner soap deodorant razor razors "shaving cream" hairbrush comb makeup "make-up" moisturizer lotion sunscreen "after sun" aftersun "lip balm" perfume tweezers "nail clippers" "contact lenses" contacts "lens solution" glasses sunglasses "hair ties" wipes'],
+  ['Clothes & shoes', 'socks underwear undies bras shirts shirt "t-shirts" tshirts tops shorts pants trousers jeans dresses dress skirts sweater sweaters hoodie hoodies jacket jackets coat rainjacket "rain jacket" pajamas pyjamas nightwear belt hats hat cap scarf gloves shoes sneakers sandals flipflops "flip flops" boots swimsuit swimsuits bikini "swim trunks" trunks rashguard "laundry bag"'],
+  ['Beach & pool', 'towel towels "beach towel" "beach towels" goggles snorkel "snorkel gear" floaties "water wings" "beach toys" "beach bag" "sand toys" bucket spade parasol "beach umbrella" "swim diapers" "pool noodles"'],
+  ['Kids', 'diapers nappies stroller "car seat" "baby monitor" pacifier dummy bottles formula bib bibs "baby food" toys toy legos lego "coloring books" crayons "card games" "board games" games puzzles "stuffed animal" "stuffed animals" teddy blanket blankie'],
+  ['Food & snacks', 'snacks water "water bottle" "water bottles" thermos "travel mug" coffee tea "granola bars" fruit sandwiches gum "trail mix" cooler "lunch box"'],
+  ['Comfort & travel', 'pillow "neck pillow" "eye mask" earplugs "ear plugs" book books magazine magazines journal notebook pen umbrella "day pack" daypack backpack "packing cubes" locks "luggage tags" "sleeping bag" "travel blanket"'],
+];
+const PACK_DEFS = parseSpecs(PACK_GROUPS);
+export function packGroupOf(title) {
+  const t = String(title || '').toLowerCase();
+  // the household's own kids outrank every keyword
+  for (const f of state.family) {
+    if (f.user || f.id === 'house' || !f.name) continue;
+    if (t.includes(f.name.toLowerCase())) return 'Kids';
+  }
+  return matchSpecs(PACK_DEFS, title); // null when nothing matches — stays ungrouped
 }
 
 function isGrocery(t) {

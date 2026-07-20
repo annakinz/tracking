@@ -15,6 +15,7 @@ import {
   setPackListOrder, sortPackList, setPackItemGroup, packListGroups,
 } from './store.js';
 import { showToast, changed, catSwatch } from './views.js';
+import { packGroupOf } from './classify.js';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
@@ -102,9 +103,10 @@ function itemRowHtml(text, itemId, kind, opts = {}) {
     '<button class="pk-x" data-action="del-' + kind + '-item" data-id="' + itemId + '" aria-label="remove">✕</button></div>';
 }
 
-// A small "sort A–Z" control shown above a list
+// Controls above a list: A–Z sort and one-tap auto-grouping
 function sortBar() {
   return '<div class="pk-sortbar"><button class="chip small" data-action="sort-az">A–Z</button>' +
+    '<button class="chip small" data-action="auto-group">✦ Auto-group</button>' +
     '<span class="hint tiny">drag ⠿ to reorder · ⊞ to group</span></div>';
 }
 
@@ -277,6 +279,24 @@ export function initPacking() {
         if (g === null) return;
         setPackItemGroup(kind, nav.id, id, g);
         changed();
+        return;
+      }
+      case 'auto-group': {
+        const kind = nav.screen === 'template' ? 'template' : 'trip';
+        const list = kind === 'template' ? getTemplate(nav.id) : getTrip(nav.id);
+        if (!list) return;
+        // fill ONLY ungrouped items — never overwrite a group set by hand
+        let n = 0, left = 0;
+        for (const it of list.items) {
+          if (it.group) continue;
+          const g = packGroupOf(it.text);
+          if (g) { setPackItemGroup(kind, nav.id, it.id, g); n++; }
+          else left++;
+        }
+        changed();
+        showToast(n
+          ? 'Grouped ' + n + ' item' + (n === 1 ? '' : 's') + (left ? ' · ' + left + ' left for you' : '')
+          : 'Nothing I recognize to group — use ⊞ to place the rest.');
         return;
       }
       case 'sort-az': {
