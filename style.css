@@ -264,7 +264,7 @@ select {
 .uni-bubble {
   position: absolute; border-radius: 50%;
   display: flex; align-items: center; justify-content: center; text-align: center;
-  padding: 9%; overflow: hidden; line-height: 1.1; font-weight: 700; color: #3a2b22;
+  padding: 6%; overflow: hidden; line-height: 1.12; font-weight: 700; color: #3a2b22;
   box-shadow: 0 5px 14px rgba(60,40,20,.16);
   animation-name: uniDrift; animation-timing-function: ease-in-out;
   animation-iteration-count: infinite; animation-direction: alternate;
@@ -924,3 +924,17 @@ body.dump-focus #dumpText {
 .pk-selbox { width: 26px; height: 26px; flex: none; border: 2px dashed var(--faint); border-radius: 50%;
   display: flex; align-items: center; justify-content: center; color: var(--lilac-deep); font-weight: 800; }
 .pk-item.selon .pk-selbox { border-style: solid; border-color: var(--lilac-deep); }
+
+/* Size universe: focus toggle + readable dark (work) peek cards */
+.uni-toggle {
+  position: absolute; top: 10px; right: 12px; z-index: 4;
+  background: var(--card); color: var(--ink); border: 2px solid var(--line);
+  border-radius: 999px; padding: 6px 14px; font-size: 13px; font-weight: 700;
+  box-shadow: 0 2px 8px rgba(35,38,46,.12);
+}
+.uni-toggle.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+#peekCard.on-dark .peek-title { color: #fff; }
+#peekCard.on-dark .peek-chip { background: rgba(255,255,255,.16); color: #f3f3ef; }
+#peekCard.on-dark .peek-chip b { color: rgba(255,255,255,.72); }
+#peekCard.on-dark .peek-actions button { background: rgba(255,255,255,.16); color: #fff; }
+#peekCard.on-dark .peek-actions [data-edit] { background: #fff; color: var(--ink); }

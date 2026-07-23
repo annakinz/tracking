@@ -4,7 +4,7 @@ const DB_KEY = 'stratos.v1';
 
 // Build number — bump together with the service-worker CACHE in sw.js on
 // every deploy. Shown in Settings so you can confirm your phone is current.
-export const BUILD = '54';
+export const BUILD = '55';
 
 export const DIM_ORDER = ['priority', 'effort', 'difficulty', 'dread', 'restock'];
 
@@ -322,8 +322,11 @@ export function markDone(id, done = true, note) {
   item.status = done ? 'done' : 'active';
   item.doneAt = done ? Date.now() : null;
   item.doneBy = done ? state.profile : null;      // who finished it (for the other's news)
-  if (!done) item.doneNote = null;
-  else if (note != null) item.doneNote = String(note).trim() || null;
+  if (!done) { item.doneNote = null; item.doneNoteAt = null; }
+  else if (note != null) {
+    item.doneNote = String(note).trim() || null;
+    if (item.doneNote) item.doneNoteAt = Date.now();
+  }
   touch(item);
   save();
 }
@@ -334,6 +337,7 @@ export function attachDoneNote(id, note) {
   const item = getItem(id);
   if (!item) return;
   item.doneNote = (note || '').trim() || null;
+  item.doneNoteAt = item.doneNote ? Date.now() : null; // its own stamp so the note surfaces even after the completion already synced
   touch(item);
   save();
 }
@@ -619,6 +623,20 @@ function scanMessages(it, seeding) {
   }
 }
 
+// Surface a completion NOTE added after the fact. The plain "done" event only
+// fires on the active→done transition; if the other person finishes a task
+// (which syncs) and THEN leaves a note, my copy is already done, so that path
+// stays silent. This catches the note on its own — keyed by doneNoteAt so it
+// never collides with the completion card and re-notifies if the note is edited.
+function scanDoneNote(it, prevStatus, prevNote, seeding) {
+  const me = state.profile;
+  if (it.visibility !== 'shared' || it.status !== 'done' || !it.doneNote) return;
+  if (it.doneBy && it.doneBy === me) return;      // my own note
+  if (prevStatus !== 'done') return;              // fresh completion already carried the note
+  if (it.doneNote === prevNote) return;           // note unchanged
+  pushNews({ itemId: it.id, kind: 'done', by: it.doneBy || null, title: it.title, note: it.doneNote, at: it.doneNoteAt || it.updatedAt || 0 }, seeding);
+}
+
 // surface when the other person claims ("I'm on it") a shared task
 function scanClaim(it, prevClaim, seeding) {
   const me = state.profile;
@@ -656,11 +674,11 @@ export function applySync(kind, remote) {
       state.items.push({ ...it, media: [] }); changed = true;
       if (watch) { detectNews(it, undefined, seeding); scanMessages(it, seeding); scanClaim(it, undefined, seeding); }
     } else if ((it.updatedAt || 0) > (local.updatedAt || 0)) {
-      const prev = local.status, prevClaim = local.claimedBy;
+      const prev = local.status, prevClaim = local.claimedBy, prevNote = local.doneNote;
       const idx = state.items.findIndex(x => x.id === it.id);
       state.items[idx] = { ...it, media: local.media || [] }; // keep local photos
       changed = true;
-      if (watch) { detectNews(it, prev, seeding); scanMessages(it, seeding); scanClaim(it, prevClaim, seeding); }
+      if (watch) { detectNews(it, prev, seeding); scanDoneNote(it, prev, prevNote, seeding); scanMessages(it, seeding); scanClaim(it, prevClaim, seeding); }
     }
   }
   // packing lists ride the shared file too — merge them with their own

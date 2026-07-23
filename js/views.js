@@ -45,8 +45,10 @@ const CAT_HOMES = {
   health: 0, groceries: 1, supplies: 1, school: 2, wellbeing: 5,
   planning: 3, finance: 4, home: 6, errands: 7, shopping: 7, laundry: 4, clutter: 6,
 };
+const GRAPHITE_SW = { bg: '#D7D9E0', dot: '#2A2D35', deep: '#16181D' }; // "work" reads black
 export function catSwatch(cat) {
   const c = (cat || 'general').toLowerCase();
+  if (c === 'work' || c === 'work tasks') return GRAPHITE_SW;
   let idx = CAT_HOMES[c];
   if (idx === undefined) {
     let h = 0;

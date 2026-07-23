@@ -37,6 +37,7 @@ let uniNodes = [];       // current universe layout {it,size,r,x,y,targetY,el,is
 let uniW = 0, uniH = 0;
 let selectedNode = null; // last peeked/pinched bubble
 let pinching = false;    // a two-finger launch is in progress
+let uniFocus = true;     // Size screen opens focused on the top priorities
 
 export function initSizer() {
   els = {
@@ -54,6 +55,7 @@ export function initSizer() {
     skip: document.getElementById('skipBtn'),
     universe: document.getElementById('sizeUniverse'),
     uniField: document.getElementById('universeField'),
+    focusBtn: document.getElementById('uniFocus'),
     allBtn: document.getElementById('allBtn'),
     peekWrap: document.getElementById('peekWrap'),
     peekCard: document.getElementById('peekCard'),
@@ -65,6 +67,7 @@ export function initSizer() {
   els.ok.addEventListener('click', commit);
   els.skip.addEventListener('click', skip);
   els.allBtn.addEventListener('click', openUniverse);
+  if (els.focusBtn) els.focusBtn.addEventListener('click', () => { uniFocus = !uniFocus; renderUniverse(); });
 }
 
 // ---------- the universe: every bubble at once, ranked by priority ----------
@@ -88,14 +91,41 @@ function uniDiam(u) { // wide exponential: the biggest is ~8× the smallest
   return Dmin * Math.pow(Dmax / Dmin, Math.max(0, Math.min(1, u / n)));
 }
 
+// Focus mode: show only what actually needs attention — items still needing a
+// size, plus the highest-priority ones — so the sky isn't a wall of small
+// bubbles. Falls back to the top handful when nothing is formally "Important",
+// so Focus is never near-empty. Returns { items, hidden }.
+function focusSet(all) {
+  const n = state.dims.priority.strata.length;
+  const unsized = all.filter(i => uOf(i, 'priority') === null);
+  const sized = all.filter(i => uOf(i, 'priority') !== null);
+  let top = sized.filter(i => effectivePriority(i) >= n - 3);   // Important, Urgent, On fire
+  const MIN = Math.min(6, sized.length);
+  if (top.length < MIN) {
+    top = sized.slice().sort((a, b) => effectivePriority(b) - effectivePriority(a)).slice(0, MIN);
+  }
+  const keep = new Set([...unsized, ...top]);
+  return { items: all.filter(i => keep.has(i)), hidden: all.length - keep.size };
+}
+
 function renderUniverse() {
   stopSettle();
   const field = els.uniField;
   field.innerHTML = '';
   const W = field.clientWidth || 360, H = field.clientHeight || 600;
   const n = state.dims.priority.strata.length;
-  const items = state.items.filter(i =>
+  const all = state.items.filter(i =>
     i.status !== 'done' && !i.parent && i.type !== 'issue' && visibleTo(i, state.profile));
+
+  // Focus vs. All. The toggle shows the mode + how many are tucked away.
+  const fs = uniFocus ? focusSet(all) : { items: all, hidden: 0 };
+  const items = fs.items;
+  if (els.focusBtn) {
+    els.focusBtn.classList.toggle('on', uniFocus);
+    els.focusBtn.textContent = uniFocus
+      ? (fs.hidden ? '✦ Focus · ' + fs.hidden + ' more' : '✦ Focus')
+      : '○ Showing all';
+  }
 
   const topPad = 44, botPad = 62;
   uniW = W; uniH = H;
@@ -197,12 +227,17 @@ function uniBubble(nd) {
   b.style.width = b.style.height = size + 'px';
   b.style.left = (nd.x - nd.r) + 'px';
   b.style.top = (nd.y - nd.r) + 'px';
+  const base = catColor(it.category);
   b.style.background = bubbleBg(it.category);
-  // text scales with the bubble, all the way down to tiny on the small ones
+  // text scales with the bubble but stays readable: bigger min size, more lines,
+  // and a colour + shadow chosen for contrast against the bubble.
   b.innerHTML = '<span></span>';
   const span = b.querySelector('span');
-  span.style.webkitLineClamp = size >= 122 ? '3' : size >= 90 ? '2' : '1';
-  b.style.fontSize = Math.max(5, size / 6.6) + 'px';
+  span.style.webkitLineClamp = size >= 150 ? '5' : size >= 112 ? '4' : size >= 80 ? '3' : size >= 52 ? '2' : '1';
+  b.style.fontSize = Math.max(9, size / 6.2) + 'px';
+  const ink = textOn(base);
+  b.style.color = ink.color;
+  span.style.textShadow = ink.shadow;
   span.textContent = it.title;
 
   // gentle, individual drift — small enough not to re-close the gaps
@@ -295,6 +330,8 @@ function peekBubble(nd) {
     '<div class="peek-actions"><button data-resize>◯ resize</button>' +
     '<button data-edit>✎ edit</button></div>';
   card.style.background = bubbleBg(it.category);        // the card IS the bubble
+  // dark categories (e.g. work) get light text so the card stays readable
+  card.classList.toggle('on-dark', relLum(catColor(it.category)) < 0.55);
   els.peekWrap.hidden = false;
   positionNear(card, nd.el);
   morphFromBubble(card, nd.el);                         // …grown large from where you tapped
@@ -333,11 +370,24 @@ function morphFromBubble(card, anchor) {
 // category tint for a universe bubble (kept in sync with views catSwatch dots)
 const UNI_SWATCH = ['#FF7A59', '#2FBF8F', '#8B6FE8', '#F0B000', '#3E9EE3', '#E9629F', '#97A93B', '#FF9E3D'];
 const UNI_HOMES = { health: 0, groceries: 1, supplies: 1, school: 2, wellbeing: 5, planning: 3, finance: 4, home: 6, errands: 7, shopping: 7, laundry: 4, clutter: 6 };
+const GRAPHITE = '#2A2D35';   // "work" reads black
 function catColor(cat) {
   const c = (cat || 'general').toLowerCase();
+  if (c === 'work' || c === 'work tasks') return GRAPHITE;
   let idx = UNI_HOMES[c];
   if (idx === undefined) { let h = 0; for (let k = 0; k < c.length; k++) h = (h * 31 + c.charCodeAt(k)) >>> 0; idx = h % UNI_SWATCH.length; }
   return UNI_SWATCH[idx];
+}
+// pick legible text (colour + shadow) for a given bubble colour
+function relLum(hex) {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+}
+function textOn(hex) {
+  return relLum(hex) < 0.55
+    ? { color: '#ffffff', shadow: '0 1px 3px rgba(0,0,0,.55)' }
+    : { color: '#2a1e17', shadow: '0 1px 2px rgba(255,255,255,.6)' };
 }
 
 // zoom into one bubble's stratum: the sizer, focused, peers visible; "all"
