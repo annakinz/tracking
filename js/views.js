@@ -1576,6 +1576,10 @@ export function renderSettings() {
     ' <input data-fam="' + f.id + '" value="' + esc(f.name) + '"></label>').join('');
 
   body.innerHTML =
+    '<div class="group-head">version</div>' +
+    '<div class="setrow">Build <b>v' + BUILD + '</b> ' +
+    '<button id="setUpdate" class="primary">↻ Force update</button></div>' +
+    '<p class="hint">Tap Force update to clear the cached app and reload the latest — do this on both phones after a new build. (Your data is untouched.)</p>' +
     '<div class="group-head">this device</div>' +
     '<div class="setrow">Profile: <b>' + esc(memberName(state.profile)) + '</b> ' +
     '<button id="setSwitch" class="chip">switch</button></div>' +
@@ -1600,11 +1604,7 @@ export function renderSettings() {
     '<button id="setReset" class="chip danger">Reset all</button></div>' +
     '<p class="hint">Data lives on this device for now (export/import to move it). Sync between phones is the next milestone — see DESIGN.md.</p>' +
     '<div class="group-head">local backups</div>' + backupsHtml() +
-    '<p class="hint">Stratos automatically keeps recent snapshots on this device (a few per day). If a sync ever drops something, restore an earlier snapshot to get it back. Restoring is itself undoable — the current state is snapshotted first.</p>' +
-    '<div class="group-head">version</div>' +
-    '<div class="setrow">Build <b>v' + BUILD + '</b> ' +
-    '<button id="setUpdate" class="chip">Force update</button></div>' +
-    '<p class="hint">If you don’t see recent changes, tap Force update — it clears the cached app and reloads the latest. (Your data is untouched.)</p>';
+    '<p class="hint">Stratos automatically keeps recent snapshots on this device (a few per day). If a sync ever drops something, restore an earlier snapshot to get it back. Restoring is itself undoable — the current state is snapshotted first.</p>';
 
   body.querySelectorAll('[data-fam]').forEach(inp => {
     inp.onchange = () => {
