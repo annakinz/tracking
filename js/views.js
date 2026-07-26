@@ -784,10 +784,11 @@ export function renderHouse() {
   let active = items.filter(i => i.status !== 'done');
   const done = items.filter(i => i.status === 'done').sort((a, b) => (b.doneAt || 0) - (a.doneAt || 0));
 
-  // list ↔ shop toggle (shop = a store-run checklist over groceries & supplies)
+  // shop ↔ tasks toggle (shop = a store-run checklist over groceries & supplies;
+  // tasks = house to-dos). Shop leads; Tasks second.
   const seg = document.createElement('div');
   seg.className = 'segmented';
-  for (const [mode, label] of [['list', '☰ List'], ['shop', '🛒 Shop']]) {
+  for (const [mode, label] of [['shop', '🛒 Shop'], ['list', '☑ Tasks']]) {
     const b = document.createElement('button');
     b.className = 'seg' + (houseModeVal === mode ? ' on' : '');
     b.textContent = label;
