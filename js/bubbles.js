@@ -78,7 +78,7 @@ export function initSizer() {
 export function openUniverse() {
   els.stage.hidden = true;
   els.allBtn.hidden = true;
-  const any = state.items.some(i => i.status !== 'done' && !i.parent && i.type !== 'issue' && visibleTo(i, state.profile));
+  const any = state.items.some(i => i.status !== 'done' && !i.parent && (i.type === 'task' || i.type === 'goal') && visibleTo(i, state.profile));
   if (!any) { els.universe.hidden = true; els.empty.hidden = false; return; }
   els.empty.hidden = true;
   els.universe.hidden = false;
@@ -115,7 +115,7 @@ function renderUniverse() {
   const W = field.clientWidth || 360, H = field.clientHeight || 600;
   const n = state.dims.priority.strata.length;
   const all = state.items.filter(i =>
-    i.status !== 'done' && !i.parent && i.type !== 'issue' && visibleTo(i, state.profile));
+    i.status !== 'done' && !i.parent && (i.type === 'task' || i.type === 'goal') && visibleTo(i, state.profile));
 
   // Focus vs. All. The toggle shows the mode + how many are tucked away.
   const fs = uniFocus ? focusSet(all) : { items: all, hidden: 0 };

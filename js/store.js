@@ -4,7 +4,7 @@ const DB_KEY = 'stratos.v1';
 
 // Build number — bump together with the service-worker CACHE in sw.js on
 // every deploy. Shown in Settings so you can confirm your phone is current.
-export const BUILD = '62';
+export const BUILD = '63';
 
 export const DIM_ORDER = ['priority', 'effort', 'difficulty', 'dread', 'restock'];
 
@@ -187,6 +187,13 @@ export function addItem(fields) {
       source: fields.source,
     },
   };
+  // Groceries & supplies auto-size to "Getting low" (level 4 on the restock
+  // dial) so a freshly added item lands on the shopping list at a sensible
+  // urgency instead of sitting "unsized". Resize any specific one via edit.
+  if (item.type === 'supply' && !Object.keys(item.dims).length) {
+    const rs = state.dims.restock.strata[3];   // 1-indexed level 4 = "Getting low"
+    if (rs) { item.dims.restock = { s: rs.id, f: 0.5, at: Date.now() }; item.status = 'active'; }
+  }
   state.items.push(item);
   save();
   return item;
@@ -575,8 +582,11 @@ export function visibleTo(item, profile) {
 // bubble to size; and an item sized on a non-priority dim flips to 'active' yet
 // is still a dotted bubble. Priority-unset is the honest signal.
 export function inboxItems() {
+  // Only priority-ranked things (tasks/goals) need the bubble sizer. Supplies
+  // are ranked by restock (auto-set) and issues by difficulty, so neither
+  // belongs in the "needs sizing" count or the priority sky.
   return state.items.filter(i =>
-    i.status !== 'done' && !i.parent && i.type !== 'issue' &&
+    i.status !== 'done' && !i.parent && (i.type === 'task' || i.type === 'goal') &&
     visibleTo(i, state.profile) && uOf(i, 'priority') === null);
 }
 
