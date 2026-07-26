@@ -5,7 +5,7 @@
 
 import { state, tokens, learnedGuess, exactGuess } from './store.js';
 
-const GROCERY = new Set(('milk eggs egg bread butter cheese yogurt yoghurt apples apple bananas banana coffee tea sugar flour rice pasta cereal oats oatmeal chicken beef pork fish salmon shrimp onions onion garlic potatoes potato tomatoes tomato lettuce spinach carrots carrot cucumber peppers juice ham jam honey snacks crackers chips cookies berries strawberries blueberries grapes oranges lemons limes avocado avocados tortillas beans lentils tofu granola ketchup mustard mayo salsa salt pepper oil vinegar wine beer seltzer soda yeast noodles broth stock frozen icecream ice-cream buttermilk cream').split(' '));
+const GROCERY = new Set(('milk eggs egg bread butter cheese yogurt yoghurt skyr kefir apples apple bananas banana coffee tea sugar flour rice pasta cereal cereals cornflakes flakes muesli weetabix porridge cheerios granola oats oatmeal chicken beef pork bacon sausage sausages mince turkey lamb fish salmon cod tuna shrimp prawns herring onions onion garlic potatoes potato tomatoes tomato lettuce salad spinach kale carrots carrot cucumber peppers pepper broccoli cauliflower mushrooms mushroom zucchini courgette celery leek leeks cabbage corn peas juice ham jam honey nutella hummus pesto olives snacks crackers chips cookies biscuits chocolate popcorn nuts raisins berries strawberries blueberries raspberries grapes oranges orange lemons lemon limes lime melon watermelon pineapple mango avocado avocados tortillas wraps pita bagels croissants muffins beans lentils chickpeas tofu ketchup mustard mayo mayonnaise salsa soy salt pepper oil vinegar wine beer seltzer soda yeast noodles broth stock frozen icecream ice-cream buttermilk cream margarine quinoa couscous coconut ginger cilantro parsley basil dill cinnamon vanilla syrup').split(' '));
 
 const SUPPLY = ['toilet paper', 'paper towels', 'detergent', 'dish soap', 'dishwasher', 'soap', 'shampoo', 'conditioner', 'toothpaste', 'toothbrush', 'floss', 'batteries', 'light bulb', 'lightbulb', 'trash bags', 'sponges', 'sponge', 'laundry', 'wipes', 'diapers', 'sunscreen', 'band-aids', 'bandaids', 'tissues', 'napkins', 'foil', 'plastic wrap', 'ziploc', 'vacuum bags', 'filters', 'filter'];
 
@@ -199,6 +199,9 @@ export function packGroupOf(title) {
   return matchSpecs(PACK_DEFS, title); // null when nothing matches — stays ungrouped
 }
 
+// felt states / struggles that belong in wellbeing rather than as to-dos
+const ISSUE_CUES = /\b(insomnia|sleepless|can'?t sleep|anxious|anxiety|stress(ed)?|overwhelm(ed)?|exhaust(ed|ion)|burn ?out|burnt ?out|tired|fatigue|drained|depress(ed|ion)|sad|lonely|lonel|down|worried|worry|fear|afraid|panic|grief|griev|angry|frustrat|restless|headache|migraine|nausea|dizzy|mood|unmotivated|procrastinat|overwhelmed|guilt|shame|resentment)\b/i;
+
 function isGrocery(t) {
   const words = t.split(/\s+/);
   return words.length <= 4 && words.some(w => GROCERY.has(w.replace(/[^a-zæøå]/g, '')));
@@ -222,10 +225,13 @@ export function classifyOne(raw) {
     type = 'task'; dimension = 'priority';
   } else if (/\b(want to|goal|learn|start (doing|being)|habit)\b/.test(t)) {
     type = 'goal'; dimension = 'priority';
-  } else if (words.length <= 3) {
-    // bare noun-ish phrase with no action verb reads as a difficulty ("insomnia")
+  } else if (ISSUE_CUES.test(t)) {
+    // a felt struggle ("insomnia", "so stressed") is a wellbeing issue…
     type = 'issue'; dimension = 'difficulty';
   } else {
+    // …but a bare noun ("cornflakes", "new tires") is just a to-do. Defaulting
+    // these to a visible task (not a hidden wellbeing issue) means a
+    // misfile is easy to spot and correct — and the correction is what teaches.
     type = 'task'; dimension = 'priority';
   }
 

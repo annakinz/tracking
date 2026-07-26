@@ -7,6 +7,7 @@ import {
   newsItems, reviewNews, clearNews, otherUsers, partnerName,
   claimItem, snoozeItem, isSnoozed, setDailyChore, finishedToday, openLoad, digestSeenToday, markDigestSeen,
   backupList, restoreBackup, buyItem, shopSuggestions,
+  takeLastLearned, learnedRules, forgetRule, forgetAllRules,
 } from './store.js';
 import { parseDump, classifyOne, aisleOf } from './classify.js';
 import { agentClassify, agentPhotoTasks, getKey, setKey, testKey, lastAgentError } from './agent.js';
@@ -164,6 +165,25 @@ export function renderDigest() {
 
 export function changed() {
   document.dispatchEvent(new CustomEvent('stratos:changed'));
+}
+
+// Say what an edit just taught the local agent, in plain words.
+function describeRule(field, to) {
+  if (field === 'category') return 'category “' + to + '”';
+  if (field === 'type') return ({ supply: 'a shopping item', task: 'a to-do', issue: 'a wellbeing note', goal: 'a goal' }[to] || to);
+  if (field === 'scope') return 'for ' + memberName(to);
+  if (field === 'visibility') return to;
+  if (field === 'source') return 'bought at ' + to;
+  return String(to);
+}
+// After an edit: if it taught a rule, show it — and offer one-tap undo.
+function flashLearned() {
+  const learned = takeLastLearned();
+  if (!learned.length) return;
+  const phrase = learned[0].phrase;
+  const bits = learned.map(l => describeRule(l.field, l.to));
+  showToast('✦ Learned: “' + phrase + '” → ' + bits.join(' · ') + '. I’ll remember next time.',
+    'Undo', () => { for (const l of learned) forgetRule(l.field, l.phrase); showToast('Rule forgotten.'); });
 }
 
 // transient toast with an optional action (used for undo)
@@ -682,7 +702,7 @@ function openQuickEdit(id, field, anchor) {
   positionPop(pop, anchor);
 
   pop.querySelectorAll('.qe-opt').forEach(btn => {
-    btn.onclick = () => { updateItem(id, options[+btn.dataset.i].apply); wrap.hidden = true; changed(); };
+    btn.onclick = () => { updateItem(id, options[+btn.dataset.i].apply); wrap.hidden = true; changed(); flashLearned(); };
   });
   pop.querySelector('[data-editall]').onclick = () => { wrap.hidden = true; openSheet(id); };
   $('#quickShade').onclick = () => { wrap.hidden = true; };
@@ -1285,6 +1305,7 @@ export function openSheet(id) {
       loop,
     });
     changed();
+    flashLearned();
   };
 
   const close = () => { commit(); wrap.hidden = true; sheet.style.transform = ''; };
@@ -1355,6 +1376,22 @@ function backupsHtml() {
     return '<div class="setrow bakrow"><span>' + esc(when) + ' · <b>' + b.items + '</b> item' + (b.items === 1 ? '' : 's') + '</span>' +
       '<button class="chip" data-bak="' + b.at + '">Restore</button></div>';
   }).join('') + '</div>';
+}
+
+function ruleValueLabel(field, value) {
+  if (field === 'type') return ({ supply: 'shopping', task: 'to-do', issue: 'wellbeing', goal: 'goal' }[value] || value);
+  if (field === 'scope') return memberName(value);
+  return value;
+}
+// A plain-language list of the rules the app has learned from your corrections.
+function learnedRulesHtml() {
+  const rules = learnedRules();
+  if (!rules.length) return '<p class="hint">Nothing learned yet. When you correct where a dumped item landed — its category, who it’s for, shared vs. private — I remember it here and tell you at the moment.</p>';
+  return '<div class="rules-list">' + rules.map(r =>
+    '<div class="setrow rulerow"><span class="rule-text">“' + esc(r.phrase) + '” → <b>' + esc(ruleValueLabel(r.field, r.value)) + '</b>' +
+    '<span class="rule-field">' + esc(r.field === 'visibility' ? 'privacy' : r.field) + '</span></span>' +
+    '<button class="chip small" data-ffield="' + esc(r.field) + '" data-fphrase="' + esc(r.phrase) + '">Forget</button></div>').join('') +
+    '</div><div class="setrow"><button id="setForgetAll" class="chip danger">Forget all rules</button></div>';
 }
 
 // One-line health readout: shared items pushed, last sync, and any error.
@@ -1540,6 +1577,9 @@ export function renderSettings() {
     '<div class="group-head">household notes for the agent</div>' +
     '<textarea id="setNotes" placeholder="Facts the agent should know, e.g. “blue IKEA + rainbow bags = clean laundry to put away; bamboo baskets = dirty laundry”">' + esc(state.agentNotes || '') + '</textarea>' +
     '<p class="hint">Included in every Gemini prompt (text and photo dumps). Write how your home actually works — the agent treats it as ground truth.</p>' +
+    '<div class="group-head">what I’ve learned</div>' +
+    '<p class="hint">Every time you correct where a dumped item landed, I remember it — and pop up “✦ Learned…” so you know. Here they are; tap Forget if one’s wrong.</p>' +
+    learnedRulesHtml() +
     '<div class="group-head">link previews</div>' +
     '<label class="toggle" style="padding:6px 0"><input type="checkbox" id="setLinkPrev"' + (state.linkPreviews ? ' checked' : '') + '> fetch titles &amp; preview images for links in notes</label>' +
     '<p class="hint">Off by default. When on, a link you paste is sent to a preview service (microlink.io) to fetch its title and image; the result is cached and shared with your household. Leave off to keep link URLs private — cards still show the site icon and name.</p>' +
@@ -1576,6 +1616,13 @@ export function renderSettings() {
   };
   $('#setNotes').onchange = (e) => { state.agentNotes = e.target.value.trim(); save(); };
   $('#setLinkPrev').onchange = (e) => { state.linkPreviews = e.target.checked; save(); };
+  body.querySelectorAll('[data-ffield]').forEach(btn => {
+    btn.onclick = () => { forgetRule(btn.dataset.ffield, btn.dataset.fphrase); renderSettings(); };
+  });
+  const forgetAll = $('#setForgetAll');
+  if (forgetAll) forgetAll.onclick = () => {
+    if (confirm('Forget every learned rule? Filing goes back to the built-in defaults.')) { forgetAllRules(); renderSettings(); }
+  };
   wireSyncSettings();
   body.querySelectorAll('[data-bak]').forEach(btn => {
     btn.onclick = () => {

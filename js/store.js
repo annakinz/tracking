@@ -4,7 +4,7 @@ const DB_KEY = 'stratos.v1';
 
 // Build number — bump together with the service-worker CACHE in sw.js on
 // every deploy. Shown in Settings so you can confirm your phone is current.
-export const BUILD = '56';
+export const BUILD = '57';
 
 export const DIM_ORDER = ['priority', 'effort', 'difficulty', 'dread', 'restock'];
 
@@ -294,6 +294,8 @@ export function updateItem(id, fields) {
       // rolling correction log — becomes context for the Gemini agent
       (state.corrections || (state.corrections = [])).push({ title: item.title, field: k, to: v, at: Date.now() });
       state.corrections = state.corrections.slice(-50);
+      // remember what was just taught so the UI can tell you (and let you undo)
+      lastLearned.push({ field: k, to: v, from: item[k] || null, phrase: normPhrase(item.title) });
     }
     item[k] = v;
   }
@@ -477,6 +479,10 @@ export function tokens(text) {
 }
 const STOP = new Set(['the', 'and', 'for', 'with', 'this', 'that', 'from', 'about', 'need', 'get', 'buy', 'some', 'new']);
 
+// what the last edit(s) taught — the UI drains this to show "✦ Learned …"
+let lastLearned = [];
+export function takeLastLearned() { const l = lastLearned; lastLearned = []; return l; }
+
 export function learn(field, toks, value) {
   const L = state.learned[field] || (state.learned[field] = {});
   for (const t of toks) {
@@ -484,6 +490,35 @@ export function learn(field, toks, value) {
     tv[value] = (tv[value] || 0) + 1;
   }
   save();
+}
+
+// The exact-phrase rules, for a human-readable "what I've learned" list.
+export function learnedRules() {
+  const out = [];
+  for (const field of ['type', 'category', 'scope', 'visibility', 'source']) {
+    const L = state.learned['_exact_' + field];
+    if (!L) continue;
+    for (const [phrase, value] of Object.entries(L)) out.push({ field, phrase, value });
+  }
+  return out.sort((a, b) => a.phrase.localeCompare(b.phrase) || a.field.localeCompare(b.field));
+}
+// Forget a rule: drop the exact memory AND unwind that phrase's token votes,
+// so a wrong lesson can be fully corrected.
+export function forgetRule(field, phrase) {
+  const key = '_exact_' + field, L = state.learned[key];
+  const value = L && L[phrase];
+  if (L) delete L[phrase];
+  if (value && state.learned[field]) {
+    for (const t of tokens(phrase)) {
+      const tv = state.learned[field][t];
+      if (tv && tv[value]) { tv[value]--; if (tv[value] <= 0) delete tv[value]; }
+      if (tv && Object.keys(tv).length === 0) delete state.learned[field][t];
+    }
+  }
+  save();
+}
+export function forgetAllRules() {
+  state.learned = {}; state.corrections = []; save();
 }
 
 // Exact-phrase memory: one correction is enough for a verbatim repeat
