@@ -796,45 +796,50 @@ export function renderHouse() {
   }
   body.appendChild(seg);
 
-  // store-run mode: standing in Netto, filter to the Netto loop
-  const sources = [...new Set(active.map(i => i.source).filter(Boolean))].sort();
-  if (sources.length) {
-    const bar = document.createElement('div');
-    bar.className = 'filterbar';
-    for (const s of ['all', ...sources]) {
-      const b = document.createElement('button');
-      b.className = 'chip' + (houseSourceVal === s ? ' on' : '');
-      b.textContent = s === 'all' ? 'Everywhere' : '@ ' + s;
-      b.onclick = () => { houseSourceVal = s; renderHouse(); };
-      bar.appendChild(b);
-    }
-    body.appendChild(bar);
-  } else {
-    houseSourceVal = 'all';
+  // Shop mode: the store run over groceries & supplies. The @store filter is a
+  // shopping concept, so it lives here — standing in Netto, see the Netto loop.
+  if (houseModeVal === 'shop') {
+    const sources = [...new Set(active.filter(shoppable).map(i => i.source).filter(Boolean))].sort();
+    if (sources.length) {
+      const bar = document.createElement('div');
+      bar.className = 'filterbar';
+      for (const s of ['all', ...sources]) {
+        const b = document.createElement('button');
+        b.className = 'chip' + (houseSourceVal === s ? ' on' : '');
+        b.textContent = s === 'all' ? 'Everywhere' : '@ ' + s;
+        b.onclick = () => { houseSourceVal = s; renderHouse(); };
+        bar.appendChild(b);
+      }
+      body.appendChild(bar);
+    } else { houseSourceVal = 'all'; }
+    if (houseSourceVal !== 'all') active = active.filter(i => i.source === houseSourceVal);
+    renderShop(body, active, done);
+    return;
   }
-  if (houseSourceVal !== 'all') active = active.filter(i => i.source === houseSourceVal);
 
-  if (houseModeVal === 'shop') { renderShop(body, active, done); return; }
+  // List mode = house TO-DOS only. Groceries & supplies belong to 🛒 Shop.
+  houseSourceVal = 'all';
+  const tasks = active.filter(i => !shoppable(i));
+  const doneTasks = done.filter(i => !shoppable(i));
 
-  const groups = { groceries: [], supplies: [], other: [] };
-  for (const i of active) (groups[i.category] || groups.other).push(i);
-
-  for (const [name, arr] of Object.entries(groups)) {
-    if (!arr.length) continue;
-    arr.sort((a, b) => (uOf(b, 'restock') ?? effectivePriority(b)) - (uOf(a, 'restock') ?? effectivePriority(a)));
+  const byCat = {};
+  for (const i of tasks) (byCat[i.category] || (byCat[i.category] = [])).push(i);
+  for (const [cat, arr] of Object.entries(byCat)) {
+    arr.sort((a, b) => effectivePriority(b) - effectivePriority(a));
     const h = document.createElement('div');
     h.className = 'group-head';
-    h.textContent = name === 'other' ? 'house tasks & more' : name;
+    h.textContent = cat;
+    h.style.color = catSwatch(cat).deep;
     body.appendChild(h);
-    for (const i of arr) body.appendChild(itemRow(i, i.type === 'supply' ? 'restock' : 'priority', { hideCat: true, hideScope: true }));
+    for (const i of arr) body.appendChild(itemRow(i, 'priority', { hideCat: true, hideScope: true }));
   }
 
-  if (done.length) {
+  if (doneTasks.length) {
     const h = document.createElement('div');
     h.className = 'group-head';
     h.textContent = 'recently done — tap ↺ to re-add';
     body.appendChild(h);
-    for (const i of done.slice(0, 15)) {
+    for (const i of doneTasks.slice(0, 15)) {
       const el = document.createElement('button');
       el.className = 'row done';
       el.innerHTML = '<span class="row-main"><span class="row-title">' + esc(i.title) + '</span></span>' +
@@ -847,8 +852,11 @@ export function renderHouse() {
       body.appendChild(el);
     }
   }
-  if (!active.length && !done.length) {
-    body.innerHTML = '<div class="empty"><div class="empty-art">⌂</div><p>Add groceries, supplies, house tasks…</p></div>';
+  if (!tasks.length && !doneTasks.length) {
+    const e = document.createElement('div');
+    e.className = 'empty';
+    e.innerHTML = '<div class="empty-art">⌂</div><p>House to-dos live here.<br>Groceries &amp; supplies are in <b>🛒 Shop</b>.</p>';
+    body.appendChild(e);
   }
 }
 
