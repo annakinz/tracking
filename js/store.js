@@ -4,7 +4,7 @@ const DB_KEY = 'stratos.v1';
 
 // Build number — bump together with the service-worker CACHE in sw.js on
 // every deploy. Shown in Settings so you can confirm your phone is current.
-export const BUILD = '64';
+export const BUILD = '65';
 
 export const DIM_ORDER = ['priority', 'effort', 'difficulty', 'dread', 'restock'];
 
@@ -584,10 +584,24 @@ export function visibleTo(item, profile) {
 export function inboxItems() {
   // Only priority-ranked things (tasks/goals) need the bubble sizer. Supplies
   // are ranked by restock (auto-set) and issues by difficulty, so neither
-  // belongs in the "needs sizing" count or the priority sky.
+  // belongs in the "needs sizing" count or the priority sky. Also honours the
+  // Life/Work view so the count matches what the sky actually shows.
   return state.items.filter(i =>
     i.status !== 'done' && !i.parent && (i.type === 'task' || i.type === 'goal') &&
-    visibleTo(i, state.profile) && uOf(i, 'priority') === null);
+    visibleTo(i, state.profile) && uOf(i, 'priority') === null && inWorkView(i));
+}
+
+// ---------- Life / Work view (shared across Lists and Size) ----------
+// One toggle, so the two screens always agree: Life hides Work, Work shows
+// only Work. Not persisted — resets to Life each session.
+let workView = 'life';
+export const getWorkView = () => workView;
+export function setWorkView(v) { workView = v === 'work' ? 'work' : 'life'; }
+export const isWorkCat = (i) => { const c = (i.category || '').toLowerCase(); return c === 'work' || c === 'work tasks'; };
+export const inWorkView = (i) => (workView === 'work' ? isWorkCat(i) : !isWorkCat(i));
+// any Work still to size/see, so the toggle can hide itself when irrelevant
+export function hasWorkItems() {
+  return state.items.some(i => isWorkCat(i) && i.status !== 'done' && visibleTo(i, state.profile));
 }
 
 export function exportJSON() { return JSON.stringify(state, null, 2); }

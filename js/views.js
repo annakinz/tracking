@@ -8,6 +8,7 @@ import {
   claimItem, snoozeItem, isSnoozed, setDailyChore, finishedToday, openLoad, digestSeenToday, markDigestSeen,
   backupList, restoreBackup, buyItem, shopSuggestions,
   takeLastLearned, learnedRules, forgetRule, forgetAllRules,
+  getWorkView, setWorkView, inWorkView, hasWorkItems,
 } from './store.js';
 import { parseDump, classifyOne, aisleOf } from './classify.js';
 import { agentClassify, agentPhotoTasks, getKey, setKey, testKey, lastAgentError } from './agent.js';
@@ -19,8 +20,6 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 let personFilterVal = 'all';
-let listWork = 'life';   // Lists: 'life' hides Work, 'work' shows only Work
-const isWork = (i) => { const c = (i.category || '').toLowerCase(); return c === 'work' || c === 'work tasks'; };
 let wellbeingOpen = false;
 let snoozeOpen = false;
 let groupMode = false; // false = flat ranked list; true = grouped by category
@@ -452,14 +451,14 @@ export function renderLists() {
     b.onclick = () => { groupMode = b.dataset.mode === 'cat'; renderLists(); };
   });
 
-  // Life ↔ Work: keep Work out of the everyday lists; view it on its own. The
-  // toggle only appears once there's Work to separate (or you're inside it).
+  // Life ↔ Work: keep Work out of the everyday lists; view it on its own. Shared
+  // with the Size screen, so both agree. Toggle appears once there's Work to
+  // separate (or you're inside it).
   const lw = $('#lifeWork');
-  const hasWork = state.items.some(i => isWork(i) && i.status !== 'done' && visibleTo(i, state.profile));
-  lw.hidden = !hasWork && listWork === 'life';
+  lw.hidden = !hasWorkItems() && getWorkView() === 'life';
   lw.querySelectorAll('.seg').forEach(b => {
-    b.classList.toggle('on', b.dataset.work === listWork);
-    b.onclick = () => { listWork = b.dataset.work; renderLists(); };
+    b.classList.toggle('on', b.dataset.work === getWorkView());
+    b.onclick = () => { setWorkView(b.dataset.work); renderLists(); document.dispatchEvent(new CustomEvent('stratos:refresh')); };
   });
 
   const bar = $('#personFilter');
@@ -477,8 +476,7 @@ export function renderLists() {
   const vis = $('#visSel').value;
   const showDone = $('#showDone').checked;
 
-  let items = state.items.filter(i => visibleTo(i, state.profile));
-  items = items.filter(i => listWork === 'work' ? isWork(i) : !isWork(i));
+  let items = state.items.filter(i => visibleTo(i, state.profile) && inWorkView(i));
   if (personFilterVal !== 'all') items = items.filter(i => i.scope === personFilterVal);
   if (vis === 'shared') items = items.filter(i => i.visibility === 'shared');
   if (vis === 'private') items = items.filter(i => i.visibility === 'private' && i.createdBy === state.profile);

@@ -60,6 +60,14 @@ function init() {
     if (current === 'pack') renderPacking();
   });
 
+  // a Life/Work view toggle: refresh the Size-tab count and re-sync the other
+  // screen's toggle, without touching data (no sync push).
+  document.addEventListener('stratos:refresh', () => {
+    refreshBadge();
+    if (current === 'lists') renderLists();
+    if (current === 'size') openUniverse();
+  });
+
   // tapping the hero bubble in the sizer opens its full edit sheet
   document.addEventListener('stratos:edit', (e) => openSheet(e.detail));
 

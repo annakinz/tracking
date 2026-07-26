@@ -3,7 +3,7 @@
 // the background shifts, peers swap to that stratum's residents, and the
 // bubble re-enters small (growing) or large (shrinking).
 
-import { state, setMagnitude, uOf, insertStratum, visibleTo, effectivePriority, getItem, memberName } from './store.js';
+import { state, setMagnitude, uOf, insertStratum, visibleTo, effectivePriority, getItem, memberName, inWorkView, getWorkView, setWorkView, hasWorkItems } from './store.js';
 import { defaultDimension } from './classify.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
@@ -56,6 +56,7 @@ export function initSizer() {
     universe: document.getElementById('sizeUniverse'),
     uniField: document.getElementById('universeField'),
     focusBtn: document.getElementById('uniFocus'),
+    lifeWork: document.getElementById('uniLifeWork'),
     allBtn: document.getElementById('allBtn'),
     peekWrap: document.getElementById('peekWrap'),
     peekCard: document.getElementById('peekCard'),
@@ -68,6 +69,12 @@ export function initSizer() {
   els.skip.addEventListener('click', skip);
   els.allBtn.addEventListener('click', openUniverse);
   if (els.focusBtn) els.focusBtn.addEventListener('click', () => { uniFocus = !uniFocus; renderUniverse(); });
+  if (els.lifeWork) els.lifeWork.querySelectorAll('.seg').forEach(b =>
+    b.addEventListener('click', () => {
+      setWorkView(b.dataset.work);
+      renderUniverse();
+      document.dispatchEvent(new CustomEvent('stratos:refresh')); // sync the badge + Lists toggle
+    }));
 }
 
 // ---------- the universe: every bubble at once, ranked by priority ----------
@@ -78,8 +85,10 @@ export function initSizer() {
 export function openUniverse() {
   els.stage.hidden = true;
   els.allBtn.hidden = true;
-  const any = state.items.some(i => i.status !== 'done' && !i.parent && (i.type === 'task' || i.type === 'goal') && visibleTo(i, state.profile));
-  if (!any) { els.universe.hidden = true; els.empty.hidden = false; return; }
+  // Show the sky whenever any task/goal exists (either view), so the Life/Work
+  // toggle stays reachable even when the current view happens to be empty.
+  const anyAtAll = state.items.some(i => i.status !== 'done' && !i.parent && (i.type === 'task' || i.type === 'goal') && visibleTo(i, state.profile));
+  if (!anyAtAll) { els.universe.hidden = true; els.empty.hidden = false; return; }
   els.empty.hidden = true;
   els.universe.hidden = false;
   renderUniverse();
@@ -114,8 +123,13 @@ function renderUniverse() {
   field.innerHTML = '';
   const W = field.clientWidth || 360, H = field.clientHeight || 600;
   const n = state.dims.priority.strata.length;
+  // Life/Work toggle: shown once there's Work to separate; mirrors Lists.
+  if (els.lifeWork) {
+    els.lifeWork.hidden = !hasWorkItems() && getWorkView() === 'life';
+    els.lifeWork.querySelectorAll('.seg').forEach(b => b.classList.toggle('on', b.dataset.work === getWorkView()));
+  }
   const all = state.items.filter(i =>
-    i.status !== 'done' && !i.parent && (i.type === 'task' || i.type === 'goal') && visibleTo(i, state.profile));
+    i.status !== 'done' && !i.parent && (i.type === 'task' || i.type === 'goal') && visibleTo(i, state.profile) && inWorkView(i));
 
   // Focus vs. All. The toggle shows the mode + how many are tucked away.
   const fs = uniFocus ? focusSet(all) : { items: all, hidden: 0 };
