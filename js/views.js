@@ -523,6 +523,8 @@ export function renderLists() {
   }
 
   const surfaced = surfacedOf(allActive).slice(0, 5);
+  // don't list a surfaced item twice — it already leads the page here
+  const surfacedIds = new Set(surfaced.map(s => s.i.id));
 
   if (surfaced.length) {
     const h = document.createElement('div');
@@ -541,21 +543,22 @@ export function renderLists() {
     }
   }
 
+  const listed = active.filter(i => !surfacedIds.has(i.id));  // surfaced ones lead above; don't repeat them
   if (groupMode) {
     // Categories mode: grouped by category, ranked within each
     const groups = {};
-    for (const i of active) (groups[i.category] || (groups[i.category] = [])).push(i);
+    for (const i of listed) (groups[i.category] || (groups[i.category] = [])).push(i);
     for (const [cat, arr] of Object.entries(groups)) {
       const h = document.createElement('div');
       h.className = 'group-head';
       h.textContent = cat;
       h.style.color = catSwatch(cat).deep;
       body.appendChild(h);
-      for (const i of arr) body.appendChild(itemRow(i, sort));
+      for (const i of arr) body.appendChild(itemRow(i, sort, { hideCat: true }));
     }
   } else {
     // Priority mode: one flat ranked list across every category
-    for (const i of active) body.appendChild(itemRow(i, sort));
+    for (const i of listed) body.appendChild(itemRow(i, sort));
   }
 
   if (showDone && done.length) {
@@ -607,20 +610,27 @@ function itemRow(i, sort, opts = {}) {
   const boost = gravityBoost(i);
   const kids = childrenOf(i.id);
 
+  // Only chips that carry information for THIS view. The card is already
+  // category-tinted, so the category label is dropped where a heading already
+  // says it (opts.hideCat) and the scope where everything shares one
+  // (opts.hideScope). "shared" is the default for the whole household, so only
+  // the exception — "private" — is worth a chip. "unsized" applies to
+  // priority-ranked things (tasks/goals), not supplies ranked by restock.
+  const needsSize = (i.type === 'task' || i.type === 'goal') && uOf(i, 'priority') === null;
   el.innerHTML =
     '<span class="dot" style="width:' + dot + 'px;height:' + dot + 'px;' +
       'background:radial-gradient(circle at 32% 30%, #ffffffb3, ' + sw.dot + ')"></span>' +
     '<span class="row-main"><span class="row-title">' + esc(i.title) + '</span>' +
     '<span class="row-chips">' +
-      rchip('category', esc(i.category)) +
-      (i.scope !== state.profile ? rchip('scope', esc(memberName(i.scope))) : '') +
+      (opts.hideCat ? '' : rchip('category', esc(i.category))) +
+      (!opts.hideScope && i.scope !== state.profile ? rchip('scope', esc(memberName(i.scope))) : '') +
       (i.due && !opts.noDue ? rchip('due', (boost >= 1.5 ? '⚑ ' : boost > 0 ? '◷ ' : 'due ') + i.due, boost > 0 ? 'hot' : '') : '') +
       (i.source ? rchip('source', '@ ' + esc(i.source)) : '') +
       (i.loop?.every && !opts.noDue ? rchip('loop', i.loop.every <= 1 ? '↺ daily' : '↺ ~' + i.loop.every + 'd') : '') +
       (kids.length ? '<button class="rchip" data-steps>◉ ' + kids.filter(k => k.status === 'done').length + '/' + kids.length + '</button>' : '') +
       (i.claimedBy ? '<span class="minichip claim">🙌 ' + esc(memberName(i.claimedBy)) + (i.claimedBy === state.profile ? ' (you)' : '') + '</span>' : '') +
-      rchip('visibility', i.visibility === 'private' ? 'private' : 'shared') +
-      (uOf(i, 'priority') === null ? '<span class="minichip unsized">unsized</span>' : '') +
+      (i.visibility === 'private' ? rchip('visibility', 'private') : '') +
+      (needsSize ? '<span class="minichip unsized">unsized</span>' : '') +
     '</span></span>' +
     '<button class="row-icon" data-done title="done">' + (i.status === 'done' ? '↺' : '✓') + '</button>' +
     '<button class="row-icon edit" data-edit title="edit all">✎</button>';
@@ -816,7 +826,7 @@ export function renderHouse() {
     h.className = 'group-head';
     h.textContent = name === 'other' ? 'house tasks & more' : name;
     body.appendChild(h);
-    for (const i of arr) body.appendChild(itemRow(i, i.type === 'supply' ? 'restock' : 'priority'));
+    for (const i of arr) body.appendChild(itemRow(i, i.type === 'supply' ? 'restock' : 'priority', { hideCat: true, hideScope: true }));
   }
 
   if (done.length) {
