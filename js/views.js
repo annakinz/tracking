@@ -704,20 +704,30 @@ function positionPop(pop, anchor) {
 // ---------- HOUSE ----------
 
 export function initHouse() {
+  const ta = $('#houseAdd');
+  const grow = () => {
+    if (!ta.value) { ta.style.height = ''; return; }   // empty → CSS one-line base
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 220) + 'px';
+  };
   const add = () => {
-    const v = $('#houseAdd').value.trim();
+    const v = ta.value.trim();
     if (!v) return;
-    for (const raw of parseDump(v)) {
+    let n = 0;
+    for (const raw of parseDump(v)) {   // splits newlines AND comma lists, same as brain dump
       const c = classifyOne(raw);
       c.scope = 'house';
       if (c.type === 'task') c.category = c.category === 'general' ? 'house tasks' : c.category;
-      addItem(c);
+      addItem(c); n++;
     }
-    $('#houseAdd').value = '';
+    ta.value = ''; grow();
     changed();
+    if (n > 1) showToast('Added ' + n + ' items');
   };
   $('#houseAddBtn').addEventListener('click', add);
-  $('#houseAdd').addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); });
+  ta.addEventListener('input', grow);
+  // Enter adds (Shift+Enter makes a new line, like a proper multi-line dump)
+  ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); add(); } });
 }
 
 let houseSourceVal = 'all';
@@ -812,6 +822,22 @@ export function renderHouse() {
   }
 }
 
+// Break one item whose title is a comma list ("diapers, wipes, formula") into
+// separate items, each inheriting the original's scope/category/type/source, so
+// they file into the right aisles. Explicit action → splits on every comma
+// (unlike the dump heuristic, which leaves long phrases alone). Returns the count.
+function splitCommaItem(id) {
+  const item = getItem(id);
+  if (!item) return 0;
+  const parts = String(item.title).split(/\s*,\s*/).map(s => s.trim().replace(/^[-*•]\s*/, '')).filter(Boolean);
+  if (parts.length < 2) return 0;
+  for (const p of parts) {
+    addItem({ title: p, raw: p, scope: item.scope, category: item.category, type: item.type, visibility: item.visibility, source: item.source || null });
+  }
+  deleteItem(item.id);
+  return parts.length;
+}
+
 // Shop mode: the store run as a checklist. Groceries & supplies grouped by
 // aisle (things you'd find together), walked in store order; the critical ones
 // (almost out / out / urgent / overdue) rise to the top of their aisle with an
@@ -855,6 +881,7 @@ function renderShop(body, active, done) {
     if (r == null) return '⚑';
     return state.dims.restock.strata[Math.min(Math.floor(r), state.dims.restock.strata.length - 1)].label;
   };
+  const splittable = (i) => !i.checked && /\S,\s*\S/.test(i.title || '');
   const row = (i, checked) => {
     const crit = !checked && isCritical(i);
     const el = document.createElement('div');
@@ -863,7 +890,8 @@ function renderShop(body, active, done) {
       '<button class="pk-check' + (checked ? ' on' : '') + '" aria-label="got it">' + (checked ? '✓' : '') + '</button>' +
       '<span class="shop-title">' + esc(i.title) + '</span>' +
       (crit ? '<span class="shop-flag">⚑ ' + esc(restockLabel(i)) + '</span>' : '') +
-      (i.source && houseSourceVal === 'all' ? '<span class="minichip">@ ' + esc(i.source) + '</span>' : '');
+      (i.source && houseSourceVal === 'all' ? '<span class="minichip">@ ' + esc(i.source) + '</span>' : '') +
+      (splittable(i) ? '<button class="shop-split" title="split at commas into separate items">✂</button>' : '');
     el.querySelector('.pk-check').onclick = () => {
       // buying auto-resets the restock dial to "Stocked"; unticking restores it
       buyItem(i.id, !checked);
@@ -871,6 +899,12 @@ function renderShop(body, active, done) {
       if (!checked) showToast('Got ' + i.title + ' — marked Stocked', 'Undo', () => { buyItem(i.id, false); changed(); });
     };
     el.querySelector('.shop-title').onclick = () => openSheet(i.id);
+    const sp = el.querySelector('.shop-split');
+    if (sp) sp.onclick = (e) => {
+      e.stopPropagation();
+      const n = splitCommaItem(i.id);
+      if (n) { changed(); showToast('Split into ' + n + ' items'); }
+    };
     return el;
   };
 

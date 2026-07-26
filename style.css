@@ -245,13 +245,16 @@ select {
 }
 
 /* ---------- house ---------- */
-.quickadd { display: flex; gap: 8px; margin-top: 14px; }
-.quickadd input {
+.quickadd { display: flex; gap: 8px; margin-top: 14px; align-items: flex-start; }
+.quickadd textarea {
   flex: 1; background: var(--card); border: 2px solid var(--line);
   border-radius: 14px; padding: 12px 14px; color: var(--ink); min-width: 0;
+  font: inherit; resize: none; overflow: hidden; line-height: 1.35;
+  height: 48px; transition: height .15s, border-color .15s;   /* one-line resting height */
 }
-.quickadd input:focus { outline: none; border-color: var(--coral); }
-.quickadd .primary { padding: 12px 18px; }
+.quickadd textarea:focus { outline: none; border-color: var(--coral); }
+.quickadd textarea::placeholder { color: var(--faint); }
+.quickadd .primary { padding: 12px 18px; align-self: stretch; }
 
 /* ---------- the universe: all bubbles at once, ranked by priority ---------- */
 #sizeUniverse {
@@ -938,3 +941,6 @@ body.dump-focus #dumpText {
 #peekCard.on-dark .peek-chip b { color: rgba(255,255,255,.72); }
 #peekCard.on-dark .peek-actions button { background: rgba(255,255,255,.16); color: #fff; }
 #peekCard.on-dark .peek-actions [data-edit] { background: #fff; color: var(--ink); }
+
+/* shop: split-at-commas button */
+.shop-split { flex: none; color: var(--lilac-deep); font-size: 15px; padding: 2px 6px; }
