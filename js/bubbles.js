@@ -3,7 +3,7 @@
 // the background shifts, peers swap to that stratum's residents, and the
 // bubble re-enters small (growing) or large (shrinking).
 
-import { state, setMagnitude, uOf, insertStratum, visibleTo, effectivePriority, getItem, memberName, inWorkView, getWorkView, setWorkView, hasWorkItems } from './store.js';
+import { state, setMagnitude, uOf, insertStratum, visibleTo, effectivePriority, getItem, memberName, shortLabel, deriveLabel, inWorkView, getWorkView, setWorkView, hasWorkItems } from './store.js';
 import { defaultDimension } from './classify.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
@@ -162,6 +162,7 @@ function renderUniverse() {
 
   relaxUniverse(90);
   for (const nd of uniNodes) { nd.el = uniBubble(nd); field.appendChild(nd.el); }
+  fitBubbleText();
 }
 
 // one round of decluttering: push overlapping bubbles apart, then clamp to
@@ -219,6 +220,30 @@ function startSettle() {
 }
 function stopSettle() { if (settleRAF) { cancelAnimationFrame(settleRAF); settleRAF = null; } }
 
+// Measure each bubble's text and make it fit the circle: step the type down
+// first, then — for the smallest bubbles, where there's no room left — trim the
+// word and add an ellipsis. Guarantees nothing is ever visually cut mid-letter.
+// (1px is font-metric rounding, not clipping, so we allow that much slack.)
+function fitBubbleText() {
+  // width must actually fit; 1-2px of height is font-metric rounding, not clipping
+  const over = (sp) => sp.scrollWidth > sp.clientWidth + 1 || sp.scrollHeight > sp.clientHeight + 2;
+  for (const nd of uniNodes) {
+    const span = nd.el && nd.el.querySelector('span');
+    if (!span) continue;
+    let px = parseFloat(nd.el.style.fontSize) || 12;
+    for (let k = 0; k < 10 && over(span) && px > 8; k++) {
+      px = Math.max(8, px * 0.9);
+      nd.el.style.fontSize = px + 'px';
+    }
+    // still too wide at the floor: shorten the word itself
+    let text = span.textContent;
+    for (let k = 0; k < 24 && over(span) && text.length > 2; k++) {
+      text = text.slice(0, -1).trimEnd();
+      span.textContent = text + '…';
+    }
+  }
+}
+
 function layoutUniverse() {
   for (const nd of uniNodes) {
     if (!nd.el) continue;
@@ -239,6 +264,7 @@ function uniBubble(nd) {
   const b = document.createElement('div');
   b.className = 'uni-bubble' + (nd.isUnsized ? ' unsized' : '');
   b.style.width = b.style.height = size + 'px';
+  b.style.padding = Math.max(2, size * 0.09) + 'px';   // scales with the bubble
   b.style.left = (nd.x - nd.r) + 'px';
   b.style.top = (nd.y - nd.r) + 'px';
   const base = catColor(it.category);
@@ -248,11 +274,18 @@ function uniBubble(nd) {
   b.innerHTML = '<span></span>';
   const span = b.querySelector('span');
   span.style.webkitLineClamp = size >= 150 ? '5' : size >= 112 ? '4' : size >= 80 ? '3' : size >= 52 ? '2' : '1';
-  b.style.fontSize = Math.max(9, size / 6.2) + 'px';
+  // Starting size; fitBubbleText() then measures and shrinks until nothing
+  // clips — a circle is narrowest away from its centre, so a long word can
+  // overflow even when the line count fits.
+  // Small circles get fewer words so the type stays legible instead of
+  // shrinking to nothing; a custom label is always shown as written.
+  const words = size >= 100 ? 3 : size >= 62 ? 2 : 1;
+  const label = (it.label || '').trim() || deriveLabel(it.title || '', words, words === 1 ? 12 : 22);
+  b.style.fontSize = Math.max(8, size / 6.2) + 'px';
   const ink = textOn(base);
   b.style.color = ink.color;
   span.style.textShadow = ink.shadow;
-  span.textContent = it.title;
+  span.textContent = label;            // compact name; full title lives on the peek card
 
   // gentle, individual drift — small enough not to re-close the gaps
   const rnd = (a, c) => a + Math.random() * (c - a);

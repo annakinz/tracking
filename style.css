@@ -267,7 +267,9 @@ select {
 .uni-bubble {
   position: absolute; border-radius: 50%;
   display: flex; align-items: center; justify-content: center; text-align: center;
-  padding: 6%; overflow: hidden; line-height: 1.12; font-weight: 700; color: #3a2b22;
+  /* padding is set per-bubble in JS (px): a % here would resolve against the
+     FIELD width, giving a small bubble the same huge padding as a large one. */
+  overflow: hidden; line-height: 1.12; font-weight: 700; color: #3a2b22;
   box-shadow: 0 5px 14px rgba(60,40,20,.16);
   animation-name: uniDrift; animation-timing-function: ease-in-out;
   animation-iteration-count: infinite; animation-direction: alternate;
@@ -276,7 +278,9 @@ select {
   transition: left .35s cubic-bezier(.2,.8,.25,1), top .35s cubic-bezier(.2,.8,.25,1);
 }
 .uni-bubble span {
-  display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden;
+  /* width:100% keeps the span from collapsing to zero as a flex item with
+     overflow:hidden — without it the text can't be measured or centred. */
+  display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; width: 100%;
   /* never stack a long word into single letters — clip it instead */
   word-break: normal; overflow-wrap: normal;
 }
@@ -955,3 +959,7 @@ body.dump-focus #dumpText {
 /* Size sky: Life/Work toggle (mirrors the Lists one), top-left */
 .uni-lw { position: absolute; top: 8px; left: 12px; z-index: 4; width: auto; display: inline-flex; }
 .uni-lw .seg { padding: 6px 12px; font-size: 12.5px; }
+
+/* sheet: optional short "bubble name" under the title */
+.sh-labelrow { display: block; color: var(--muted); font-size: 12px; font-weight: 600; margin: -2px 0 4px; }
+.sh-labelrow input { width: 100%; margin-top: 4px; }

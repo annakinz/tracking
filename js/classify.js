@@ -261,7 +261,11 @@ export function classifyOne(raw) {
   // correction (a shared distinctive word is enough — "remember it"),
   // while type/visibility want corroboration since they're more structural
   // and privacy shouldn't flip from one stray match.
-  const MIN_SCORE = { type: 2, category: 1, scope: 1, visibility: 2, source: 1 };
+  // One correction is enough to generalize everything except privacy, which
+  // still wants corroboration (a stray match must never expose a private item).
+  // Type used to need two — that's what made "this is a grocery, not a task"
+  // feel like it never sank in.
+  const MIN_SCORE = { type: 1, category: 1, scope: 1, visibility: 2, source: 1 };
   for (const field of ['type', 'category', 'scope', 'visibility', 'source']) {
     const ex = exactGuess(field, body);
     const lg = ex ? null : learnedGuess(field, toks, MIN_SCORE[field]);
@@ -279,6 +283,32 @@ export function classifyOne(raw) {
   const title = body.trim().replace(/\s+/g, ' ').replace(/^(.)/, c => c.toUpperCase());
 
   return { raw, title, type, scope, category, visibility, due, dimension, source };
+}
+
+// ---------- batch context ----------
+// A brain dump is usually ONE kind of list. When you dump a grocery run, most
+// lines are recognizable food — so the odd unknown ("bran flakes", "skyr", a
+// brand name) shouldn't land as a stray task just because it isn't in the
+// vocabulary. If the dump reads as a shopping list, unknown short noun-ish
+// lines join it. Task-shaped lines (a verb, a due date) are never absorbed.
+export function classifyDump(text) {
+  const lines = parseDump(text);
+  const out = lines.map(classifyOne);
+  const shoppy = out.filter(c => c.type === 'supply').length;
+  // "mostly groceries": at least 2 recognized, and they're the plurality
+  if (shoppy < 2 || shoppy * 2 < out.length) return out;
+  for (let k = 0; k < out.length; k++) {
+    const c = out[k];
+    if (c.type !== 'task' || c.due) continue;              // keep real to-dos
+    const t = (lines[k] || '').toLowerCase().trim();
+    if (TASK_VERBS.test(t)) continue;                      // "call the plumber" stays a task
+    if (t.split(/\s+/).length > 4) continue;               // long lines aren't groceries
+    if (exactGuess('type', lines[k])) continue;            // you've already taught this one
+    c.type = 'supply'; c.scope = 'house'; c.dimension = 'restock';
+    if (c.category === 'general') c.category = 'groceries';
+    c.viaBatch = true;                                     // for the "filed as groceries" note
+  }
+  return out;
 }
 
 export function defaultDimension(item) {

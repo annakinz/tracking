@@ -4,7 +4,7 @@ const DB_KEY = 'stratos.v1';
 
 // Build number — bump together with the service-worker CACHE in sw.js on
 // every deploy. Shown in Settings so you can confirm your phone is current.
-export const BUILD = '65';
+export const BUILD = '66';
 
 export const DIM_ORDER = ['priority', 'effort', 'difficulty', 'dread', 'restock'];
 
@@ -169,6 +169,7 @@ export function addItem(fields) {
     createdBy: state.profile,
     raw: fields.raw || fields.title,
     title: fields.title,
+    label: fields.label || null,      // optional short name for bubbles
     type: fields.type || 'task',
     scope,
     category: fields.category || 'general',
@@ -563,6 +564,48 @@ export function learnedGuess(field, toks, minScore = 1) {
 }
 
 // ---------- misc ----------
+
+// ---------- short labels ----------
+// A bubble is a small circle: the full sentence never fits. Derive a compact
+// label that keeps the verb + its object and drops the scaffolding, so
+// "Call the accountant about Q3" reads as "Call accountant" on the bubble.
+// (The full title still shows on the peek card, lists, and the edit sheet.)
+const LABEL_DROP = new Set(['the', 'a', 'an', 'my', 'our', 'some', 'to', 'of', 'that', 'this', 'and']);
+// everything from one of these onwards is context, not the thing itself
+const LABEL_TAIL = /\s+\b(about|regarding|re|because|so that|before|after|by|from|with|at|on|in|for|via|via the)\b\s+/i;
+
+export function deriveLabel(title, maxWords = 3, maxChars = 22) {
+  let t = String(title || '').trim().replace(/\s+/g, ' ');
+  if (!t) return '';
+  const cut = t.split(LABEL_TAIL)[0];          // drop a trailing context clause
+  if (cut && cut.split(' ').length >= 2) t = cut;
+  const kept = t.split(' ').filter((w, i) => {
+    const bare = w.toLowerCase().replace(/[^a-z0-9æøåäöü'-]/g, '');
+    return i === 0 || !LABEL_DROP.has(bare);   // never drop the leading word
+  });
+  // A one-word label should be the DISTINCTIVE word, not the verb:
+  // "Call the accountant" → "accountant", not "Call".
+  if (maxWords === 1) {
+    let pick = kept[0];
+    for (const w of kept) if (w.length >= pick.length) pick = w;
+    return pick.length > maxChars ? pick.slice(0, maxChars - 1) + '…' : pick;
+  }
+  let out = kept.slice(0, maxWords).join(' ');
+  if (out.length > maxChars) {                  // still long: fewer words, then clip
+    out = kept.slice(0, 2).join(' ');
+    if (out.length > maxChars) out = out.slice(0, maxChars - 1).trimEnd() + '…';
+  }
+  return out || t;
+}
+
+// The compact name a bubble wears. An explicit label (set in the edit sheet)
+// always wins; otherwise derive one from the title. Full titles live on lists,
+// the peek card, and the sheet — this is only for tight spaces.
+export function shortLabel(item) {
+  if (!item) return '';
+  const l = (item.label || '').trim();
+  return l || deriveLabel(item.title || '');
+}
 
 export function memberName(id) {
   return state.family.find(f => f.id === id)?.name || id;

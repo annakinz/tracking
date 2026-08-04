@@ -8,9 +8,9 @@ import {
   claimItem, snoozeItem, isSnoozed, setDailyChore, finishedToday, openLoad, digestSeenToday, markDigestSeen,
   backupList, restoreBackup, buyItem, shopSuggestions,
   takeLastLearned, learnedRules, forgetRule, forgetAllRules,
-  getWorkView, setWorkView, inWorkView, hasWorkItems,
+  getWorkView, setWorkView, inWorkView, hasWorkItems, deriveLabel, shortLabel,
 } from './store.js';
-import { parseDump, classifyOne, aisleOf } from './classify.js';
+import { parseDump, classifyOne, classifyDump, aisleOf } from './classify.js';
 import { agentClassify, agentPhotoTasks, getKey, setKey, testKey, lastAgentError } from './agent.js';
 import { openSizer } from './bubbles.js';
 import * as hsync from './hsync.js';
@@ -341,7 +341,7 @@ export function initDump() {
     btn.textContent = getKey() ? 'Filing…' : 'Dump it';
     let classified = await agentClassify(text);
     const viaAgent = !!classified;
-    if (!classified) classified = parseDump(text).map(classifyOne);
+    if (!classified) classified = classifyDump(text);   // batch context: a grocery run stays a grocery run
     btn.disabled = false;
     btn.textContent = 'Dump it';
     if (!classified.length) return;
@@ -1169,6 +1169,8 @@ export function openSheet(id) {
     '<div class="sheet-head"><div class="sheet-grab"></div>' +
       '<button id="shClose" class="sheet-x" title="Close">✕</button></div>' +
     '<input id="shTitle" value="' + esc(i.title) + '">' +
+    '<label class="sh-labelrow">Bubble name ' +
+      '<input id="shLabel" value="' + esc(i.label || '') + '" placeholder="' + esc(deriveLabel(i.title)) + '" maxlength="24"></label>' +
     '<div class="sheet-grid">' +
       '<label>Type <select id="shType">' + typeOpts + '</select></label>' +
       '<label>Who <select id="shScope">' + famOpts + '</select></label>' +
@@ -1325,6 +1327,7 @@ export function openSheet(id) {
       : null;
     updateItem(id, {
       title: $('#shTitle').value.trim() || i.title,
+      label: $('#shLabel').value.trim() || null,
       type: $('#shType').value,
       scope: $('#shScope').value,
       category: $('#shCat').value.trim() || i.category,
