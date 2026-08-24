@@ -790,7 +790,7 @@ export function applySync(kind, remote) {
   // out here so a peer payload can never be merged as if it were items.
   if (remote.kind === 'inbox') return false;
   let changed = false;
-  let peerAdds = 0, peerAt = 0;
+  let peerAdds = 0, peerAt = 0, peerFrom = '';
   const tomb = tombFor(kind);
   // only the shared household file carries news; seed silently the first time
   const watch = kind === 'shared';
@@ -822,6 +822,7 @@ export function applySync(kind, remote) {
         // phone already raised and this one are the same card, not two.
         peerAdds++;
         peerAt = Math.max(peerAt, it.createdAt || 0);
+        peerFrom = peerFrom || memberName(it.createdBy);   // 'familymix', same wording as the ingest card
       }
       if (watch) { detectNews(it, undefined, seeding); scanMessages(it, seeding); scanClaim(it, undefined, seeding); }
     } else if ((it.updatedAt || 0) > (local.updatedAt || 0)) {
@@ -854,7 +855,7 @@ export function applySync(kind, remote) {
   if (peerAdds) {
     const pat = peerAt || remote.at || Date.now();
     pushNews({ itemId: 'peer:' + pat, kind: 'peer', by: null,
-      title: peerAdds + ' item' + (peerAdds === 1 ? '' : 's') + ' from a connected app',
+      title: peerAdds + ' item' + (peerAdds === 1 ? '' : 's') + ' from ' + (peerFrom || 'a connected app'),
       note: 'Added to the shopping list', at: pat }, seeding);
   }
   // packing lists ride the shared file too — merge them with their own
@@ -1029,15 +1030,32 @@ export function ingestPeerItems(slot, list, batchAt) {
     return res;
   }
 
+  // Validate the WHOLE batch before touching anything. A batch is atomic: if
+  // any line is malformed we ingest none of it and leave the watermark alone.
+  // The alternative — skip the bad lines, ack the batch — is the same silent
+  // loss as truncate-and-ack: the peer reads a successful ack, prunes its
+  // outbox, and the dropped lines are gone with nobody the wiser. There is no
+  // per-item feedback channel back to a peer, so all-or-nothing is the only
+  // shape in which the ack can mean what §4 of the contract says it means.
+  const prepared = [];
+  for (let n = 0; n < list.length; n++) {
+    const raw = list[n];
+    const externalId = raw && typeof raw === 'object' ? clip(raw.externalId, 120) : '';
+    const norm = externalId ? peerNormalize(raw) : null;
+    if (!norm) {
+      res.ignoredBatch = true;
+      res.dropped = list.length;
+      res.reason = 'item ' + (n + 1) + ' of ' + list.length +
+        ' is malformed (needs a non-empty string externalId and text) — batch refused';
+      return res;
+    }
+    prepared.push([externalId, norm]);
+  }
+
   const tomb = tombFor('shared');
   const adopt = peerAdoptMap();
 
-  for (const raw of list) {
-    if (!raw || typeof raw !== 'object') { res.skipped++; continue; }
-    const externalId = clip(raw.externalId, 120);
-    const norm = peerNormalize(raw);
-    if (!externalId || !norm) { res.skipped++; continue; }
-
+  for (const [externalId, norm] of prepared) {
     const id = peerItemId(peerId, externalId);
 
     // A line the peer pushed may not live under its px_ id at all: the twin
@@ -1048,15 +1066,12 @@ export function ingestPeerItems(slot, list, batchAt) {
 
     // --- refusals: never bring something back from the dead ---
     if (tomb[id] || (adoptedId && tomb[adoptedId])) { res.skipped++; continue; }   // deleted here
-    // The externalId fallback is deliberately limited to rows the FAMILY made:
-    // px_ rows belong to whichever app minted them, and two apps that happen to
-    // pick the same externalId must not be able to reach into each other's
-    // items. Their own lines are found by the px_ id or the adopt map above.
     const minted = getItem(id);
-    const local = minted || (adoptedId ? getItem(adoptedId) : null) ||
-      state.items.find(i => i.externalId === externalId && i.visibility === 'shared' &&
-        !String(i.id).startsWith('px_'));
-    if (local && !minted) adopt[adoptKey] = local.id;   // self-heal the map
+    // The adopted row is looked up under the same visibility guard as every
+    // other path: unsharing a row must put it beyond a peer permanently, not
+    // only until its shared tombstone ages out of the prune window.
+    const adopted = adoptedId ? getItem(adoptedId) : null;
+    const local = minted || (adopted && adopted.visibility === 'shared' ? adopted : null);
     if (local && local.status === 'done') { res.skipped++; continue; }  // already bought
 
     if (local) {
@@ -1065,10 +1080,14 @@ export function ingestPeerItems(slot, list, batchAt) {
       // are left completely alone. The TITLE is only the peer's to correct on a
       // row the peer itself minted: if this is the family's own row that a peer
       // batch merged into, they named it, and a re-push must not rename it.
-      const fields = minted ? ['title', 'quantity', 'quantityGrams'] : ['quantity', 'quantityGrams'];
+      //
+      // Absent means "no opinion", never "clear it". A correction batch that
+      // omits `quantity` must not blank an amount — least of all one the family
+      // typed onto their own row. Peers add and correct; they never erase.
       let dirty = false;
-      for (const k of fields) {
-        if (local[k] !== norm[k]) { local[k] = norm[k]; dirty = true; }
+      if (minted && norm.title && local.title !== norm.title) { local.title = norm.title; dirty = true; }
+      for (const k of ['quantity', 'quantityGrams']) {
+        if (norm[k] != null && local[k] !== norm[k]) { local[k] = norm[k]; dirty = true; }
       }
       if (norm.neededOn && local.due !== norm.neededOn) { local.due = norm.neededOn; dirty = true; }
       if (dirty) { touch(local); res.updated++; } else res.skipped++;
@@ -1082,15 +1101,23 @@ export function ingestPeerItems(slot, list, batchAt) {
     // The visibility guard is the important one: without it a peer that guesses
     // a phrase could write into a PRIVATE item — one it must never be able to
     // see, let alone edit. A peer may only ever touch the shared household
-    // surface. We also stay off items that already belong to a peer (px_ ids or
-    // a foreign externalId): those are someone else's to correct, and a
-    // phrase collision must not hand them over.
-    const phrase = normPhrase(norm.title);
+    // surface. We also stay off items that already belong to a peer: px_ rows
+    // are another app's to correct, and a row already carrying an externalId is
+    // claimed — matching on the bare string would let one app reach a row a
+    // different app adopted, since externalIds are not namespaced between apps.
+    // Only OUR own adoption, recorded under our slot, counts as a claim.
+    //
+    // normPhrase drops tokens of two characters or fewer, so a short name like
+    // "Æg" normalises to nothing. Falling back to the plain lowercased title
+    // keeps those matching instead of silently adding a second row beside the
+    // family's.
+    const phrase = normPhrase(norm.title) || norm.title.trim().toLowerCase();
+    const samePhrase = (t) => (normPhrase(t) || String(t || '').trim().toLowerCase()) === phrase;
     const twin = phrase && state.items.find(i =>
       i.visibility === 'shared' && !String(i.id).startsWith('px_') &&
-      (!i.externalId || i.externalId === externalId) &&
+      (!i.externalId || adopt[adoptKey] === i.id) &&
       !i.parent && i.status !== 'done' && i.scope === norm.scope &&
-      i.type === norm.type && normPhrase(i.title) === phrase);
+      i.type === norm.type && samePhrase(i.title));
     if (twin) {
       adopt[adoptKey] = twin.id;      // remember where this line ended up
       let dirty = false;

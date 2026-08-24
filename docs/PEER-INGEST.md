@@ -20,7 +20,7 @@ The handoff's crypto and addressing were exactly right. Four things were not.
 | Inferred | Actually |
 |---|---|
 | "the only call is `get`" | **A write already exists.** `{action:"put", household, device, data}` → `{ok:true}`. That is the whole transport you need. |
-| plaintext is `{items:{…}}` | The envelope is `{v:1, items:{…}, deleted:{…}, at:<ms>}`, plus `packing` and `inboxAck` on the shared file. `deleted` is the **only** delete channel; a payload without it can never remove anything. |
+| plaintext is `{items:{…}}` | The envelope is `{v:1, items:{…}, deleted:{…}, at:<ms>}`, plus `packing`, `inboxAck` and `inboxAdopt` on the shared file. `deleted` is the **only** delete channel; a payload without it can never remove anything. |
 | `status` is `"open"｜"done"` | Statuses are **`inbox`｜`active`｜`done`**. `"open"` matches no view and the item would be invisible. |
 | merge is last-writer-wins with no ordering | It is **per-item newest-wins on `updatedAt`**, and it honours tombstones. An item with a missing or stale `updatedAt` is silently ignored forever. |
 
@@ -45,7 +45,11 @@ reasons the handoff didn't reach:
    assertion wins again.
 
 So the instinct was right even though the mechanism wasn't. The fix below removes
-the whole class rather than tuning timestamps.
+the first reason entirely — a bought or deleted item is refused by identity, not
+out-raced on timestamps. The second still bounds it: after 90 days the tombstone
+is pruned and a standing assertion creates a fresh item. That is Stratos's
+deletion window for everything, not a peer-specific weakness, and it is stated
+again in §3 and §9 rather than quietly hoped away.
 
 ---
 
@@ -151,18 +155,33 @@ name, editable in the sheet, and tappable to change. Nothing string-parses it.
 
 ### A peer may set
 
-| Field | Notes |
-|---|---|
-| `externalId` | **Required.** Stable, ≤120 chars. See identity rules below. |
-| `text` | **Required.** ≤200 chars. Mapped to `title`. (`title`/`name` also accepted.) |
-| `quantity` | Display string, ≤40 chars — `"400 g"`, `"2"`, `"1 l"`. Send it whenever you know it. |
-| `quantityGrams` | Optional number, for summing without parsing. |
-| `category` | ≤40 chars, lowercased. Defaults `groceries` (supply) / `errands` (task). |
-| `type` | `supply` (default) or `task`. Anything else → `supply`. |
-| `scope` | A household member id, else forced to `house`. |
-| `note` | ≤500 chars → the item's notes. |
-| `source` | ≤40 chars — a shop name, e.g. `"Netto"`. Enables the store filter. |
-| `neededOn` | `YYYY-MM-DD` only. Becomes the item's due date. Anything else is dropped. |
+| Field | When | Notes |
+|---|---|---|
+| `externalId` | — | **Required.** Stable, ≤120 chars, truncated silently past that (so don't rely on a shared 120-char prefix). See identity rules below. |
+| `text` | correctable\* | **Required.** ≤200 chars. Whitespace collapsed, first character upper-cased, then stored as `title`. (`title`/`name` also accepted.) |
+| `quantity` | correctable | Display string, ≤40 chars — `"400 g"`, `"2"`, `"1 l"`. Send it whenever you know it. |
+| `quantityGrams` | correctable | Optional JSON number, **> 0**, for summing without parsing. `0` and negatives are dropped. |
+| `neededOn` | correctable | `YYYY-MM-DD`, and a real calendar date. `2026-13-45` and `2026-02-30` are dropped. Becomes the due date. |
+| `category` | create-only | ≤40 chars, lowercased. Defaults `groceries` (supply) / `errands` (task). |
+| `type` | create-only | `supply` (default) or `task`. Anything else → `supply`. |
+| `scope` | create-only | A household member id, else forced to `house`. |
+| `note` | create-only | ≤500 chars → the item's notes. (`notes` also accepted.) |
+| `source` | create-only | ≤40 chars — a shop name, e.g. `"Netto"`. Enables the store filter. |
+
+\* `text` is correctable only on a row Stratos minted for you. If your line
+merged into a row the family wrote by hand (see the name-match path below),
+their wording is permanent.
+
+**"create-only" means exactly that:** the value is used when the item is first
+created and ignored on every later push of the same `externalId`. Correcting a
+category or a shop is not possible through this channel; the ack will still
+advance and nothing will change. If that turns out to matter, say so and we will
+widen it — we started narrow because the family edits these fields themselves.
+
+**Absent means "no opinion", never "clear it".** Omitting `quantity` on a
+correction leaves the existing amount alone rather than blanking it. A peer can
+add and correct values; it can never erase one. There is no way to unset a field
+through this channel.
 
 ### A peer may **not** set — these are forced, not merely ignored
 
@@ -178,33 +197,70 @@ shopping list at a sensible urgency.
 
 **Types are checked, not coerced.** `quantityGrams` must be a JSON number;
 `text`, `quantity`, `category`, `source`, `note` and `neededOn` must be strings
-(or numbers). Send an array or an object and the field is dropped — you will not
+(or numbers). Send an array or an object and the value is dropped — you will not
 find `[object Object]` or `"a,b,c"` on the family's shopping list. Control
 characters are stripped from every string.
 
+For the two **required** fields that is fatal rather than cosmetic: if
+`externalId` or `text` ends up empty — wrong JSON type, empty string, or nothing
+but control characters — the item is malformed, and **the whole batch is
+refused** (see below).
+
 ### Batch limits — read this one
 
-- **At most 200 items per batch.**
-- A batch of 201+ is **refused whole**. Not truncated: nothing is ingested, and
-  **the watermark does not move**, so §4 will correctly tell you the batch was
-  never delivered and you can re-send it in chunks. (An earlier draft took the
-  first 200 and acked all 250. That silently loses the tail — you would prune
-  your outbox believing it landed. Refusing is the honest failure.)
-- `at` is **required**, must be > 0, and must **not be in the future**. A batch
-  stamped ahead of the receiving phone's clock (more than 5 minutes) is refused
-  with the watermark untouched, rather than parking the watermark in the future
-  and killing the channel for good.
+**A batch is atomic. It is ingested whole or refused whole**, and the watermark
+moves only when it was ingested. That is what makes the ack in §4 mean something:
+you never have to wonder whether *some* of a batch landed.
+
+A batch is refused, with the watermark left exactly where it was, when:
+
+- **it holds more than 200 items.** Not truncated to 200 — refused. (An earlier
+  draft took the first 200 and acked all 250. That silently loses the tail: you
+  would prune your outbox believing it landed.) Re-send in chunks of ≤200,
+  waiting for the ack between them.
+- **any item is malformed** — `externalId` or `text` missing, empty, or the wrong
+  JSON type. One bad line refuses the batch rather than being skipped past,
+  because there is no channel to tell you *which* line was dropped, so a partial
+  ack would be a lie. The family sees which item index was at fault.
+- **`at` is missing, ≤ 0, or in the future.** More than 5 minutes ahead of the
+  receiving phone's clock is refused rather than clamped: clamping would park
+  the watermark ahead of you and stall the channel with no explanation.
+- **`at` is not newer than the watermark** — the replay defence.
+
+Individual items *are* still declined without refusing the batch, but only for
+reasons that are the family's decision rather than your error: the item was
+bought, or deleted. Those are described under "what ingest refuses" below, and
+the ack advancing over them is correct — they were delivered, and the family
+said no.
 
 ### Identity
 
 Stratos derives its own id from your slot **and** your `externalId`:
 
+```js
+// `externalId` below is the CLIPPED one: control characters stripped,
+// trimmed, then truncated to 120 characters.
+const slot = "inboxfamilymix";                 // normalised, see §1
+
+// FNV-1a, 32-bit, over UTF-16 code units (charCodeAt) — NOT UTF-8 bytes.
+// This matters: your example domain is Danish, and a textbook byte-wise
+// FNV-1a gives a different answer for any externalId containing æ, ø or å.
+function fnv1a(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(36);
+}
+
+const id = "px_" + slot.slice(0, 16)
+         + "_"  + externalId.replace(/[^a-zA-Z0-9]/g, "_").slice(0, 40)
+         + "_"  + fnv1a(slot + ":" + externalId);
 ```
-slot = "inboxfamilymix"                       // normalised, see §1
-id   = "px_" + slot.slice(0,16)
-     + "_"  + externalId.replace(/[^a-zA-Z0-9]/g,"_").slice(0,40)
-     + "_"  + fnv1a(slot + ":" + externalId)      // fnv1a as .toString(36)
-```
+
+(Our test suite re-implements this from the block above and asserts it matches
+Stratos byte for byte, including on non-ASCII input, so you can rely on it.)
 
 Three consequences you can rely on:
 
@@ -249,11 +305,20 @@ so here is exactly what it can and cannot do. A batch line merges into an
 existing row only when **all** of these hold:
 
 - the row is `visibility: "shared"` — a peer can **never** reach a private item,
-  by name or any other route;
-- the row was **not** minted by a peer (no `px_` id) and carries no other app's
-  `externalId`;
-- it has no parent, is not `done`, and matches on normalised name, `scope` and
-  `type`.
+  by name or any other route. Every lookup path applies this check, so unsharing
+  a row puts it permanently beyond a peer;
+- the row was **not** minted by a peer (no `px_` id), and carries no
+  `externalId` unless it is one *you* previously adopted (recorded under your
+  slot). `externalId`s are not namespaced between apps, so a bare string match
+  would let one app reach a row another app had claimed;
+- it has no parent, is not `done`, and matches on `scope`, `type` and normalised
+  name.
+
+**Normalised name** means: lowercased, everything outside `[a-z0-9æøåäöü\s]`
+stripped, tokens of two characters or fewer dropped, and these stopwords dropped
+— `the and for with this that from about need get buy some new`. So `"Buy milk"`
+and `"Milk"` are the same name. If that leaves nothing (a short name like `Æg`),
+the plain lowercased title is used instead.
 
 When it merges, the peer may fill in `quantity` and `quantityGrams` **only if
 those are still empty**, and stamp its `externalId` on the row. It cannot rename
@@ -261,8 +326,11 @@ the row, resize it, change its category, or complete it. Corrections you push
 later update the amount; the family's title stands.
 
 Once merged, the row *is* your line. Delete it and Stratos remembers: the same
-`externalId` is refused on every later batch rather than reappearing as a new
-`px_` item.
+`externalId` is refused on later batches rather than reappearing as a new `px_`
+item. That memory lasts **90 days** — the same window Stratos keeps any deletion
+for. After that the record is pruned along with the tombstone and a re-push
+creates a fresh item, exactly as it would for a family item deleted that long
+ago.
 
 ---
 
@@ -296,6 +364,21 @@ delivered = max(inboxAck["inboxfamilymix"]) over all readable device slots
 > it is a household-wide value: whichever phone ingests first publishes it, and
 > the others adopt it on merge without reading your inbox. So max across slots is
 > the accurate reading of "someone in this household consumed this batch."
+
+### Seeing which of your lines merged
+
+The same shared snapshot also carries `inboxAdopt` — the record of lines that
+merged into a row the family had already written by hand (§3):
+
+```jsonc
+{ "inboxAdopt": { "inboxfamilymix:familymix:2026-08-24:maelk": "i412_k3x9" } }
+```
+
+Keys are `<slot>:<externalId>`; values are the Stratos item id the line actually
+lives on. If your `externalId` appears here, that line is on a family row, not a
+`px_` item of its own — which is why its title is theirs and not yours. Read it
+if you want to reflect that back in your own UI; ignore it otherwise. It is
+pruned on the same 90-day schedule as the tombstones.
 
 Since the slot is yours alone, the safe pattern is: **keep writing your
 outstanding set, in batches of at most 200**, with a fresh, monotonically
@@ -345,11 +428,13 @@ What we *did* build, because it is real rather than theatre:
 - Every peer-settable field is type-checked, clamped, length-capped and
   control-character stripped; `neededOn` must be a real calendar date, not merely
   a well-shaped one.
-- Incoming tombstone timestamps are clamped to now — and tombstones already
-  stored are repaired on the next sync — so no slot can plant a far-future
-  tombstone that never prunes and permanently blocks an item.
-- Watermarks are clamped the same way, and a future-dated batch is refused
-  outright, so one bad `at` cannot shut the channel down permanently.
+- Incoming tombstone timestamps are clamped to now + 5 minutes of clock skew —
+  and tombstones already stored are repaired on the next sync — so no slot can
+  plant a far-future tombstone that never prunes and permanently blocks an item.
+- Watermarks adopted from another phone are clamped to now exactly (no skew
+  allowance — a watermark parked even minutes ahead would refuse live batches),
+  and a future-dated batch is refused outright, so one bad `at` cannot shut the
+  channel down permanently.
 - Batches over 200 items are refused whole and left unacked, never truncated and
   acked.
 
@@ -397,9 +482,18 @@ const CODE = 'ABCD-EFGH-JKLM-NPQR';               // the household code
 const norm = c => c.toUpperCase().replace(/[^A-Z0-9]/g, '');
 const enc  = new TextEncoder();
 
+// Loop, don't spread. `String.fromCharCode(...bytes)` passes every byte as a
+// separate argument and throws RangeError once a batch gets big — a bug you
+// would not hit on a one-item self-check and would hit on a real week's shop.
+const b64 = (buf) => {
+  let s = ''; const b = new Uint8Array(buf);
+  for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]);
+  return btoa(s);                                  // standard base64, WITH padding
+};
+
 async function householdId(code) {
   const h = await crypto.subtle.digest('SHA-256', enc.encode('stratos.hh.' + norm(code)));
-  return btoa(String.fromCharCode(...new Uint8Array(h))).replace(/[^a-zA-Z0-9]/g, '').slice(0, 24);
+  return b64(h).replace(/[^a-zA-Z0-9]/g, '').slice(0, 24);
 }
 
 async function key(code) {
@@ -428,7 +522,7 @@ async function push(gasUrl, code, items) {
       action: 'put',
       household: await householdId(code),
       device: 'inboxfamilymix',
-      data: 'v1:' + btoa(String.fromCharCode(...out)),
+      data: 'v1:' + b64(out),
     }),
   });
   return res.json();                                // { ok: true }
@@ -467,9 +561,18 @@ Stated plainly so nobody is surprised:
   reason: max, not min.
 - **A merged line loses its own title.** When your line merges into a row the
   family wrote by hand (§3), their wording wins permanently — later corrections
-  update the amount but never the name. You cannot tell from the outside which
-  of your lines merged.
-- **Refusals are visible to the family, not to you.** An oversized batch or a
-  future-dated `at` shows on the phone's sync line ("⚠ send at most 200 items per
-  batch"). Your only signal is the absence of an ack, so treat a stalled
-  watermark as an error worth logging on your side.
+  update the amount but never the name. `inboxAdopt` (§4) tells you which lines
+  those are.
+- **Refusals are visible to the family, not to you.** A refused batch shows on
+  the phone's sync line — e.g. `⚠ inboxfamilymix: batch of 250 refused — send at
+  most 200 items per batch`. Your only signal is the absence of an ack, so treat
+  a stalled watermark as an error worth logging on your side.
+- **No per-item feedback.** You cannot learn *which* items the family bought or
+  deleted, only that the batch was consumed. Re-listing them is harmless — they
+  are refused individually — but you will keep re-sending until you notice they
+  never come back on your own side.
+- **The resurrection guarantee has a 90-day horizon.** Deletions stop a re-push
+  for 90 days, after which the tombstone is pruned and a re-push creates a new
+  item. This is Stratos's general deletion window, not something specific to
+  peers.
+- **`v` is accepted but unused.** There is no version negotiation. Send `1`.
