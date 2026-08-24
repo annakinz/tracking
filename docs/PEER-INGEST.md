@@ -69,7 +69,7 @@ already dealt with.
 
 Delivery is confirmed by reading `inboxAck` back (§4).
 
-### Reserved slot
+### Reserved slot — and your identity
 
 Write the device slot **`inboxfamilymix`** — the literal string.
 
@@ -78,6 +78,16 @@ Write the device slot **`inboxfamilymix`** — the literal string.
   count so it can't mask a mistyped household code.
 - Must be alphanumeric, because the Apps Script strips everything else.
 - Convention: `inbox` + your app's name, lowercase.
+
+**The slot name is your identity.** Not the `peer` field inside the payload —
+that is self-declared, so it is worth nothing as an identity and Stratos ignores
+it for every decision that matters. The slot name is the one part of the write
+the transport controls, so it is what keys your watermark, namespaces your item
+ids, and forms your byline. Two apps that both call themselves `familymix`
+inside their payloads stay completely separate as long as their slots differ.
+
+Concretely, Stratos normalises the slot to `[a-z0-9]`, max 64 chars. So
+`inboxfamilymix` is the string you will see as the `inboxAck` key in §4.
 
 ---
 
@@ -102,7 +112,7 @@ The plaintext inside `data`:
 {
   "v": 1,
   "kind": "inbox",              // REQUIRED — this is what marks it as an inbox
-  "peer": "familymix",          // your app id, lowercase alphanumeric
+  "peer": "familymix",          // optional label only — your identity is the SLOT
   "at": 1756040000000,          // REQUIRED batch timestamp, epoch ms, MONOTONIC
   "items": {},                  // REQUIRED and MUST stay empty  ┐ see below
   "deleted": {},                // REQUIRED and MUST stay empty  ┘
@@ -160,26 +170,59 @@ name, editable in the sheet, and tappable to change. Nothing string-parses it.
 `doneNote`, `loop`, `claimedBy`, `snoozeUntil`, `messages`.
 
 Ingested items are always `status:"active"`, `visibility:"shared"`,
-`parent:null`, and `createdBy:"<your peer id>"`. Supplies are auto-sized to
-*Getting low* so they reach the shopping list at a sensible urgency.
+`parent:null`, and `createdBy:"app:<your slot, minus the inbox prefix>"` — e.g.
+`app:familymix`. The `app:` prefix is not cosmetic: it guarantees a peer byline
+can never equal a household member id, so naming your slot `inboxanna` gets you
+`app:anna`, not Anna. Supplies are auto-sized to *Getting low* so they reach the
+shopping list at a sensible urgency.
 
-Limits: **200 items per batch**; control characters stripped from every string.
+**Types are checked, not coerced.** `quantityGrams` must be a JSON number;
+`text`, `quantity`, `category`, `source`, `note` and `neededOn` must be strings
+(or numbers). Send an array or an object and the field is dropped — you will not
+find `[object Object]` or `"a,b,c"` on the family's shopping list. Control
+characters are stripped from every string.
+
+### Batch limits — read this one
+
+- **At most 200 items per batch.**
+- A batch of 201+ is **refused whole**. Not truncated: nothing is ingested, and
+  **the watermark does not move**, so §4 will correctly tell you the batch was
+  never delivered and you can re-send it in chunks. (An earlier draft took the
+  first 200 and acked all 250. That silently loses the tail — you would prune
+  your outbox believing it landed. Refusing is the honest failure.)
+- `at` is **required**, must be > 0, and must **not be in the future**. A batch
+  stamped ahead of the receiving phone's clock (more than 5 minutes) is refused
+  with the watermark untouched, rather than parking the watermark in the future
+  and killing the channel for good.
 
 ### Identity
 
-Stratos derives its own id from your `externalId`:
+Stratos derives its own id from your slot **and** your `externalId`:
 
 ```
-id = "px_" + externalId.replace(/[^a-zA-Z0-9]/g,"_").slice(0,40) + "_" + fnv1a(externalId)
+slot = "inboxfamilymix"                       // normalised, see §1
+id   = "px_" + slot.slice(0,16)
+     + "_"  + externalId.replace(/[^a-zA-Z0-9]/g,"_").slice(0,40)
+     + "_"  + fnv1a(slot + ":" + externalId)      // fnv1a as .toString(36)
 ```
 
-Two consequences you can rely on:
+Three consequences you can rely on:
 
 - **Deterministic.** Two phones ingesting the same batch mint the *same* id, so
   the ordinary merge collapses them. No duplicates from concurrency.
-- **Namespaced.** Stratos's own ids are `i<seq>_<base36>`. A `px_` id can never
-  collide with a family-created item, so no `externalId` — however chosen or
-  crafted — can address, overwrite, or delete something the family made.
+- **Namespaced against the family.** Stratos's own ids are `i<seq>_<base36>`. A
+  `px_` id can never collide with one, so no `externalId` — however chosen or
+  crafted — can *address* a family-created item by id.
+- **Namespaced against other apps.** The slot is in the id and in the hash, so if
+  another connected app picks the same `externalId` string you get two separate
+  items rather than fighting over one. Neither can read or overwrite the other's
+  lines.
+
+> One honest caveat on the second point, because an earlier draft of this doc
+> overstated it: id-namespacing means a peer cannot *address* a family item. It
+> does not mean a peer can never affect one — the name-match path below can
+> attach an amount to a row the family wrote by hand. That path is bounded and
+> described exactly; it is never able to reach a **private** item.
 
 **Make `externalId` unique per intended occurrence.** Your dated form
 (`familymix:2026-08-24:roede-linser`) is exactly right. Reusing an id across weeks
@@ -199,6 +242,28 @@ depends on having won a race:
 - the family **already has it by hand** (same normalised name, scope and type) →
   the amount is attached to *their* row instead of adding a second line.
 
+### The name-match path, stated precisely
+
+That last rule is the only way a peer ever touches something it did not create,
+so here is exactly what it can and cannot do. A batch line merges into an
+existing row only when **all** of these hold:
+
+- the row is `visibility: "shared"` — a peer can **never** reach a private item,
+  by name or any other route;
+- the row was **not** minted by a peer (no `px_` id) and carries no other app's
+  `externalId`;
+- it has no parent, is not `done`, and matches on normalised name, `scope` and
+  `type`.
+
+When it merges, the peer may fill in `quantity` and `quantityGrams` **only if
+those are still empty**, and stamp its `externalId` on the row. It cannot rename
+the row, resize it, change its category, or complete it. Corrections you push
+later update the amount; the family's title stands.
+
+Once merged, the row *is* your line. Delete it and Stratos remembers: the same
+`externalId` is refused on every later batch rather than reappearing as a new
+`px_` item.
+
 ---
 
 ## 4. Confirming delivery
@@ -207,21 +272,40 @@ Stratos does not write your slot, so read the **device** slots to see how far
 you've been consumed. Each device's shared snapshot carries:
 
 ```jsonc
-{ "inboxAck": { "familymix": 1756040000000 } }
+{ "inboxAck": { "inboxfamilymix": 1756040000000 } }
 ```
 
-That value is the `at` of the newest batch that device has ingested.
+Note the key: it is your **slot name**, not the `peer` string in your payload.
 
-- **Fully delivered** when `min(inboxAck.familymix)` across all readable device
-  slots ≥ your batch's `at`.
-- **Partially delivered** — one phone offline — when some devices are behind.
-  Nothing to do; they catch up on their next sync.
-- **Not yet seen** when every device is behind. Leave the slot as it is.
+**Read the maximum, not the minimum:**
 
-Since the slot is yours alone, the safe pattern is: **keep writing your whole
-outstanding set** with a fresh, monotonically increasing `at`. Items the family
-has already bought or deleted are refused individually, so re-listing them is
-harmless. Prune your outbox once the acks cover them.
+```
+delivered = max(inboxAck["inboxfamilymix"]) over all readable device slots
+          >= your batch's at
+```
+
+- **Delivered** when that maximum reaches your `at`. The batch is in the
+  household's shared list, and ordinary sync carries it to every phone.
+- **Not yet seen** when no slot has reached it. Leave your slot as it is.
+
+> Take the **max**, not the min. An earlier draft of this doc said min; that is
+> not a satisfiable condition and would have stalled you for ever. Two reasons:
+> device slots are never pruned, so a phone that was replaced two years ago sits
+> in the file at watermark 0; and a Stratos client older than v67 publishes no
+> `inboxAck` at all. The watermark is also **not a per-device ingest record** —
+> it is a household-wide value: whichever phone ingests first publishes it, and
+> the others adopt it on merge without reading your inbox. So max across slots is
+> the accurate reading of "someone in this household consumed this batch."
+
+Since the slot is yours alone, the safe pattern is: **keep writing your
+outstanding set, in batches of at most 200**, with a fresh, monotonically
+increasing `at`. Items the family has already bought or deleted are refused
+individually, so re-listing them is harmless. Prune your outbox once the acks
+cover them.
+
+If your outstanding set exceeds 200, send the first 200, wait for the ack, then
+send the next chunk with a new `at`. Sending 250 in one batch delivers **nothing**
+(§3) — deliberately, so you find out rather than losing the tail.
 
 `at` **must increase**. A batch whose `at` is not newer than the watermark is
 ignored wholesale — that is the replay defence.
@@ -253,13 +337,21 @@ being a family device.** Take that seriously on your side.
 
 What we *did* build, because it is real rather than theatre:
 
-- Peer ids are namespaced (`px_`), so a peer structurally cannot touch a
-  family-created item.
-- Every peer-settable field is clamped, length-capped and control-character
-  stripped; `neededOn` is format-checked.
-- Incoming tombstone timestamps are clamped to now, so no slot can plant a
-  far-future tombstone that never prunes and permanently blocks an item.
-- Batches are capped at 200 items.
+- Peer ids are namespaced (`px_` + slot), so a peer cannot *address* a
+  family-created item, nor another app's items. The one bounded exception — the
+  name-match path — is spelled out in §3 and can never reach a private item.
+- A peer's byline is `app:<slot>`, which cannot collide with a household member
+  id, so a slot named `inboxanna` cannot author items as Anna.
+- Every peer-settable field is type-checked, clamped, length-capped and
+  control-character stripped; `neededOn` must be a real calendar date, not merely
+  a well-shaped one.
+- Incoming tombstone timestamps are clamped to now — and tombstones already
+  stored are repaired on the next sync — so no slot can plant a far-future
+  tombstone that never prunes and permanently blocks an item.
+- Watermarks are clamped the same way, and a future-dated batch is refused
+  outright, so one bad `at` cannot shut the channel down permanently.
+- Batches over 200 items are refused whole and left unacked, never truncated and
+  acked.
 
 If write-only ever becomes a genuine requirement, the answer is **not** a bearer
 token — it is public-key sealing: publish an X25519 public key derived from the
@@ -291,8 +383,10 @@ order, with the amount beside each name. Stratos's aisle vocabulary now covers
 Danish shelf terms, so *rugbrød*, *havregryn*, *hakket oksekød*, *æg* and *mælk*
 sort correctly rather than falling into "Other".
 
-A delivery raises **one** summary card — "12 items from a connected app" — not one
-notification per carrot.
+A delivery raises **one** summary card — "↯ A connected app delivered · 12 items
+from familymix" — not one notification per carrot. Both phones get exactly one:
+the card is keyed on your batch's `at`, so the phone that ingested and the phone
+that learned about it over sync raise the same card rather than two.
 
 ---
 
@@ -342,7 +436,7 @@ async function push(gasUrl, code, items) {
 ```
 
 Self-check before your first real write: push a **single** throwaway item, confirm
-it appears on a phone under House → Shop, then confirm `inboxAck.familymix`
+it appears on a phone under House → Shop, then confirm `inboxAck.inboxfamilymix`
 catches up to your `at`. If the item never appears, the usual cause is the crypto:
 standard base64 **with** padding (not base64url), a 12-byte IV, the GCM tag
 appended to the ciphertext, and `stratos.hh.` with its trailing dot.
@@ -365,3 +459,17 @@ Stated plainly so nobody is surprised:
 - **A batch that fails to decrypt is skipped silently** — it does not break sync
   (updated clients exclude inboxes from the code-mismatch check), but you will
   get no error either. Use the ack to detect it.
+- **Old clients publish no `inboxAck` at all.** A pre-v67 phone in the household
+  simply never appears in your delivery check. This is why §4 says take the max
+  across slots and not the min.
+- **Stale device slots are never pruned.** A replaced phone's slot stays in the
+  file at whatever watermark it last published, possibly 0, for ever. Same
+  reason: max, not min.
+- **A merged line loses its own title.** When your line merges into a row the
+  family wrote by hand (§3), their wording wins permanently — later corrections
+  update the amount but never the name. You cannot tell from the outside which
+  of your lines merged.
+- **Refusals are visible to the family, not to you.** An oversized batch or a
+  future-dated `at` shows on the phone's sync line ("⚠ send at most 200 items per
+  batch"). Your only signal is the absence of an ack, so treat a stalled
+  watermark as an error worth logging on your side.

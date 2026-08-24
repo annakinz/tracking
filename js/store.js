@@ -4,7 +4,7 @@ const DB_KEY = 'stratos.v1';
 
 // Build number — bump together with the service-worker CACHE in sw.js on
 // every deploy. Shown in Settings so you can confirm your phone is current.
-export const BUILD = '67';
+export const BUILD = '68';
 
 export const DIM_ORDER = ['priority', 'effort', 'difficulty', 'dread', 'restock'];
 
@@ -455,8 +455,18 @@ export function insertStratum(dimId, atIdx, label) {
 // Dates reach date maths and an HTML attribute, and items arrive over sync from
 // devices (and now peer apps) we don't control — so a due date is only ever
 // trusted if it is literally YYYY-MM-DD.
+// The shape check alone is not enough: "2026-13-45" is well-shaped and still
+// not a date, and new Date() rolls "2026-02-30" over to March rather than
+// failing. Round-tripping through Date catches both, so nothing downstream can
+// be handed a date that turns into NaN (which is how gcalUrl used to throw and
+// take the whole edit sheet with it).
 export const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-export const validDue = (d) => (ISO_DATE.test(String(d || '')) ? d : null);
+export const validDue = (d) => {
+  const s = String(d || '');
+  if (!ISO_DATE.test(s)) return null;
+  const t = new Date(s + 'T12:00:00Z');
+  return Number.isFinite(t.getTime()) && t.toISOString().slice(0, 10) === s ? s : null;
+};
 
 export function effDueMs(item) {
   if (validDue(item.due)) return new Date(item.due + 'T23:59:59').getTime();
@@ -620,7 +630,12 @@ export function shortLabel(item) {
 }
 
 export function memberName(id) {
-  return state.family.find(f => f.id === id)?.name || id;
+  const f = state.family.find(f => f.id === id);
+  if (f) return f.name;
+  // Connected apps are stored as 'app:familymix' precisely so they can never
+  // collide with a family id. Strip the prefix for display only.
+  const s = String(id == null ? '' : id);
+  return s.startsWith('app:') ? s.slice(4) : s;
 }
 
 export function visibleTo(item, profile) {
@@ -694,6 +709,7 @@ export function syncSnapshot(kind, me) {
   if (kind === 'shared') {
     snap.packing = packSnapshot();          // packing rides the shared file
     snap.inboxAck = { ...peerAckMap() };    // how far each peer's inbox is consumed
+    snap.inboxAdopt = { ...peerAdoptMap() }; // where merged peer lines ended up
   }
   return snap;
 }
@@ -774,7 +790,7 @@ export function applySync(kind, remote) {
   // out here so a peer payload can never be merged as if it were items.
   if (remote.kind === 'inbox') return false;
   let changed = false;
-  let peerAdds = 0;
+  let peerAdds = 0, peerAt = 0;
   const tomb = tombFor(kind);
   // only the shared household file carries news; seed silently the first time
   const watch = kind === 'shared';
@@ -800,7 +816,13 @@ export function applySync(kind, remote) {
     const local = getItem(it.id);
     if (!local) {
       state.items.push({ ...it, due: validDue(it.due), media: [] }); changed = true;
-      if (watch && it.visibility === 'shared' && it.createdBy && !isFamilyMember(it.createdBy)) peerAdds++;
+      if (watch && it.visibility === 'shared' && it.createdBy && !isFamilyMember(it.createdBy)) {
+        // Key the summary card on the BATCH time (ingest stamps it as
+        // createdAt), not on this snapshot's time — so the card the ingesting
+        // phone already raised and this one are the same card, not two.
+        peerAdds++;
+        peerAt = Math.max(peerAt, it.createdAt || 0);
+      }
       if (watch) { detectNews(it, undefined, seeding); scanMessages(it, seeding); scanClaim(it, undefined, seeding); }
     } else if ((it.updatedAt || 0) > (local.updatedAt || 0)) {
       const prev = local.status, prevClaim = local.claimedBy, prevNote = local.doneNote;
@@ -810,26 +832,51 @@ export function applySync(kind, remote) {
       if (watch) { detectNews(it, prev, seeding); scanDoneNote(it, prev, prevNote, seeding); scanMessages(it, seeding); scanClaim(it, prevClaim, seeding); }
     }
   }
-  // adopt the highest watermark anyone has reached
+  // Adopt the highest watermark anyone has reached, clamped to now. Ingest
+  // already refuses a future-dated batch, so this only ever bites on a corrupt
+  // or hostile file — and clamping to now rather than now+skew matters, because
+  // a watermark parked even minutes ahead silently refuses live batches.
+  // Re-ingesting a batch is harmless (it is idempotent), so erring low is free.
   if (kind === 'shared' && remote.inboxAck && typeof remote.inboxAck === 'object') {
     const ack = peerAckMap();
     for (const [p, ts] of Object.entries(remote.inboxAck)) {
-      const n = Number(ts) || 0;
+      const n = Math.min(Number(ts) || 0, Date.now());
       if (n > (ack[p] || 0)) { ack[p] = n; changed = true; }
     }
   }
+  if (kind === 'shared' && remote.inboxAdopt && typeof remote.inboxAdopt === 'object') {
+    const adopt = peerAdoptMap();
+    for (const [k, v] of Object.entries(remote.inboxAdopt)) {
+      if (typeof v === 'string' && !adopt[k]) { adopt[k] = v; changed = true; }
+    }
+  }
   // one card for a whole peer delivery, not one per grocery
-  if (peerAdds && !seeding) {
-    pushNews({ itemId: 'peer:' + (remote.at || Date.now()), kind: 'peer', by: null,
+  if (peerAdds) {
+    const pat = peerAt || remote.at || Date.now();
+    pushNews({ itemId: 'peer:' + pat, kind: 'peer', by: null,
       title: peerAdds + ' item' + (peerAdds === 1 ? '' : 's') + ' from a connected app',
-      note: 'Added to the shopping list', at: remote.at || Date.now() }, seeding);
+      note: 'Added to the shopping list', at: pat }, seeding);
   }
   // packing lists ride the shared file too — merge them with their own
   // per-item newest-wins so both phones can pack a trip together
   if (kind === 'shared' && remote.packing) changed = applyPackSync(remote.packing) || changed;
   // prune tombstones + seen-news keys older than 90 days so the maps don't grow
   const cutoff = Date.now() - 90 * 86400e3;
+  // Repair, not just reject: clamping only what arrives on the wire leaves any
+  // far-future tombstone ALREADY in local state sitting there for ever — it
+  // never falls inside the prune window, so the item it names can never come
+  // back. Pull those forward so the next prune can clear them.
+  for (const [id, ts] of Object.entries(tomb)) if (ts > notFuture) tomb[id] = notFuture;
   for (const [id, ts] of Object.entries(tomb)) if (ts < cutoff) delete tomb[id];
+  // and drop adoption records whose row is long gone: once its tombstone has
+  // aged out there is nothing left to protect, and the map would otherwise grow
+  // by one entry per peer line for ever.
+  if (kind === 'shared') {
+    const adopt = peerAdoptMap();
+    for (const [k, itemId] of Object.entries(adopt)) {
+      if (!getItem(itemId) && !tomb[itemId]) delete adopt[k];
+    }
+  }
   for (const [k, ts] of Object.entries(state.newsSeen || {})) if (ts < cutoff) delete state.newsSeen[k];
   if (watch) state.newsInit = true;   // past the first sync — future changes surface
   if (changed || seeding) save();
@@ -862,6 +909,22 @@ export function applySync(kind, remote) {
 
 export const isPeerInboxSlot = (dev) => /^inbox/i.test(String(dev || ''));
 export function peerAckMap() { return state.peerAck || (state.peerAck = {}); }
+// externalId -> the id of the item it actually lives on, for the case where a
+// peer line merged into a row the family had already added by hand. Without it
+// the peer's px_ id and the family's row are two names for one thing, and a
+// delete of the row would not stop the next batch re-creating it.
+export function peerAdoptMap() { return state.peerAdopt || (state.peerAdopt = {}); }
+
+// A peer's identity is its SLOT NAME, never anything inside the payload. The
+// Apps Script decides and sanitises the slot key; the `peer` field in a batch
+// is self-declared and therefore worthless as an identity — two apps that both
+// call themselves "familymix" must not share a watermark, an id space, or a
+// byline. Everything below keys off the slot.
+export const peerSlotId = (dev) => clip(dev, 64).toLowerCase().replace(/[^a-z0-9]/g, '') || 'peer';
+// The byline shown to the family. Prefixed 'app:' so a peer that names its slot
+// "inboxanna" still can't be mistaken for Anna: isFamilyMember() stays false and
+// memberName() strips the prefix for display only.
+export const peerByline = (slot) => 'app:' + (slot.replace(/^inbox/, '') || slot);
 
 // FNV-1a: a small deterministic hash so every device derives the SAME Stratos
 // id from a peer's externalId. Two phones ingesting the same batch therefore
@@ -872,15 +935,25 @@ function hash32(str) {
   for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
   return h.toString(36);
 }
-// Always prefixed 'px_'. uid() only ever mints 'i<seq>_<base36>', so the two id
-// spaces cannot overlap: a peer can never address — let alone rewrite — an item
-// the family created, whatever externalId it chooses.
-export function peerItemId(externalId) {
+// Always prefixed 'px_' and namespaced by the peer's slot. uid() only ever mints
+// 'i<seq>_<base36>', so the two id spaces cannot overlap: a peer can never
+// address — let alone rewrite — an item the family created, whatever externalId
+// it chooses. Folding the slot into the hash means two peer apps that pick the
+// same externalId get separate items instead of fighting over one.
+export function peerItemId(peerSlot, externalId) {
+  const slot = peerSlotId(peerSlot);
   const e = String(externalId);
-  return 'px_' + e.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40) + '_' + hash32(e);
+  // ':' is a safe hash separator because a slot is [a-z0-9] only, so
+  // (slot, externalId) can never be re-split ambiguously into another pair.
+  return 'px_' + slot.slice(0, 16) + '_' + e.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40) +
+    '_' + hash32(slot + ':' + e);
 }
 
-const clip = (v, n) => String(v == null ? '' : v).replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, n);
+// Only strings and numbers are accepted — anything else (object, array, boolean)
+// becomes '' rather than being stringified, so a peer can't smuggle
+// "[object Object]" into a title or "400,500,600" into an amount by sending the
+// wrong JSON type for a field.
+const clip = (v, n) => (typeof v === 'string' || typeof v === 'number' ? String(v) : '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, n);
 
 // Fields a peer may influence. Everything else is Stratos's to decide and is
 // forced here rather than trusted — a peer must not be able to tick things off,
@@ -891,10 +964,15 @@ function peerNormalize(raw) {
   const type = raw.type === 'task' ? 'task' : 'supply';
   const scope = state.family.some(f => f.id === raw.scope) ? raw.scope : 'house';
   const category = clip(raw.category, 40).toLowerCase() || (type === 'supply' ? 'groceries' : 'errands');
-  const grams = Number(raw.quantityGrams);
+  // a JSON number, not "400" and not { amount: 400 } — a peer that sends the
+  // wrong type gets no grams rather than a coerced guess
+  const grams = typeof raw.quantityGrams === 'number' ? raw.quantityGrams : NaN;
   // A date is the one peer-settable value that reaches an HTML attribute, so it
-  // is format-checked here as well as escaped at the sink.
-  const neededOn = /^\d{4}-\d{2}-\d{2}$/.test(String(raw.neededOn || '')) ? raw.neededOn : null;
+  // is clipped to a plain string and format-checked here as well as escaped at
+  // the sink. What we store is the checked string, never the caller's object.
+  // Clipped generously and THEN checked whole — clipping to 10 would truncate
+  // `2026-01-01" onfocus=...` into a date that passes, which is exactly backwards.
+  const neededOn = validDue(clip(raw.neededOn, 40));
   return {
     title: text.replace(/^(.)/, c => c.toUpperCase()),
     quantity: clip(raw.quantity, 40) || null,
@@ -908,43 +986,88 @@ function peerNormalize(raw) {
 
 const PEER_BATCH_MAX = 200;   // a runaway peer must not be able to inflate state
 
-// Ingest one peer batch. Returns { added, updated, skipped, ignoredBatch }.
+// Ingest one peer batch. Returns
+// { added, updated, skipped, dropped, ignoredBatch, reason }.
 // Never throws on a malformed entry — a peer's bad line must not be able to
-// stop the family's sync.
-export function ingestPeerItems(peer, list, batchAt) {
-  const peerId = clip(peer, 24).toLowerCase().replace(/[^a-z0-9]/g, '') || 'peer';
-  const res = { added: 0, updated: 0, skipped: 0, ignoredBatch: false };
-  if (!Array.isArray(list)) return res;
+// stop the family's sync. `slot` is the inbox slot name, which is the peer's
+// only identity here (see peerSlotId).
+export function ingestPeerItems(slot, list, batchAt) {
+  const peerId = peerSlotId(slot);
+  const res = { added: 0, updated: 0, skipped: 0, dropped: 0, ignoredBatch: false, reason: null };
+  if (!Array.isArray(list)) { res.ignoredBatch = true; res.reason = 'inbox is not a list'; return res; }
 
   // Watermark: a batch is consumed once per device. Re-reading the same
   // standing inbox on every sync is therefore free, and a replayed older batch
-  // is refused outright.
+  // is refused outright. `at` is required — without it there is nothing to
+  // watermark against, so we refuse the batch loudly instead of re-ingesting it
+  // on every sync for ever.
   const ack = peerAckMap();
+  const now = Date.now();
   const at = Number(batchAt) || 0;
-  if (at && at <= (ack[peerId] || 0)) { res.ignoredBatch = true; return res; }
+  if (!(at > 0)) { res.ignoredBatch = true; res.reason = 'batch has no usable "at" timestamp'; return res; }
+  // Refused, not clamped. One batch stamped the year 2087 would otherwise park
+  // the watermark in the far future and shut the peer channel for this
+  // household permanently. Clamping instead would be quietly worse: the peer
+  // would read back an ack lower than the `at` it sent and re-send for ever,
+  // never learning why. Refusing tells it something is wrong with its clock.
+  if (at > now + 5 * 60e3) {
+    res.ignoredBatch = true;
+    res.reason = 'batch "at" is in the future — check the sending clock';
+    return res;
+  }
+  if (at <= (ack[peerId] || 0)) { res.ignoredBatch = true; res.reason = 'already consumed'; return res; }
+
+  // Refuse an oversized batch WHOLE rather than taking the first 200 and acking
+  // the lot. Truncate-and-ack is the one behaviour that loses data silently:
+  // the peer reads the watermark, believes all 250 landed, prunes its outbox,
+  // and the tail is gone for ever. Refusing leaves the watermark where it was,
+  // so the peer's own delivery check tells it to re-send in smaller batches.
+  if (list.length > PEER_BATCH_MAX) {
+    res.ignoredBatch = true;
+    res.dropped = list.length;
+    res.reason = 'batch of ' + list.length + ' refused — send at most ' + PEER_BATCH_MAX + ' items per batch';
+    return res;
+  }
 
   const tomb = tombFor('shared');
-  const now = Date.now();
+  const adopt = peerAdoptMap();
 
-  for (const raw of list.slice(0, PEER_BATCH_MAX)) {
+  for (const raw of list) {
     if (!raw || typeof raw !== 'object') { res.skipped++; continue; }
     const externalId = clip(raw.externalId, 120);
     const norm = peerNormalize(raw);
     if (!externalId || !norm) { res.skipped++; continue; }
 
-    const id = peerItemId(externalId);
+    const id = peerItemId(peerId, externalId);
+
+    // A line the peer pushed may not live under its px_ id at all: the twin
+    // path below merges it into a row the family had already written by hand.
+    // Both names have to be checked, for the refusals and for the lookup.
+    const adoptKey = peerId + ':' + externalId;
+    const adoptedId = adopt[adoptKey];
 
     // --- refusals: never bring something back from the dead ---
-    if (tomb[id]) { res.skipped++; continue; }              // deleted here
-    const local = getItem(id);
+    if (tomb[id] || (adoptedId && tomb[adoptedId])) { res.skipped++; continue; }   // deleted here
+    // The externalId fallback is deliberately limited to rows the FAMILY made:
+    // px_ rows belong to whichever app minted them, and two apps that happen to
+    // pick the same externalId must not be able to reach into each other's
+    // items. Their own lines are found by the px_ id or the adopt map above.
+    const minted = getItem(id);
+    const local = minted || (adoptedId ? getItem(adoptedId) : null) ||
+      state.items.find(i => i.externalId === externalId && i.visibility === 'shared' &&
+        !String(i.id).startsWith('px_'));
+    if (local && !minted) adopt[adoptKey] = local.id;   // self-heal the map
     if (local && local.status === 'done') { res.skipped++; continue; }  // already bought
 
     if (local) {
       // Same item pushed again with a corrected amount. Update only what the
       // peer owns; the family's own edits — sizing, source, claim, snooze —
-      // are left completely alone.
+      // are left completely alone. The TITLE is only the peer's to correct on a
+      // row the peer itself minted: if this is the family's own row that a peer
+      // batch merged into, they named it, and a re-push must not rename it.
+      const fields = minted ? ['title', 'quantity', 'quantityGrams'] : ['quantity', 'quantityGrams'];
       let dirty = false;
-      for (const k of ['title', 'quantity', 'quantityGrams']) {
+      for (const k of fields) {
         if (local[k] !== norm[k]) { local[k] = norm[k]; dirty = true; }
       }
       if (norm.neededOn && local.due !== norm.neededOn) { local.due = norm.neededOn; dirty = true; }
@@ -955,16 +1078,28 @@ export function ingestPeerItems(peer, list, batchAt) {
     // Not on the list under the peer's id — but the family may already have it
     // by hand ("mælk"). Attach the amount to that rather than adding a second
     // line. Both devices resolve to the same existing item, so this converges.
+    //
+    // The visibility guard is the important one: without it a peer that guesses
+    // a phrase could write into a PRIVATE item — one it must never be able to
+    // see, let alone edit. A peer may only ever touch the shared household
+    // surface. We also stay off items that already belong to a peer (px_ ids or
+    // a foreign externalId): those are someone else's to correct, and a
+    // phrase collision must not hand them over.
     const phrase = normPhrase(norm.title);
     const twin = phrase && state.items.find(i =>
+      i.visibility === 'shared' && !String(i.id).startsWith('px_') &&
+      (!i.externalId || i.externalId === externalId) &&
       !i.parent && i.status !== 'done' && i.scope === norm.scope &&
       i.type === norm.type && normPhrase(i.title) === phrase);
     if (twin) {
-      if (norm.quantity && !twin.quantity) twin.quantity = norm.quantity;
-      if (norm.quantityGrams && !twin.quantityGrams) twin.quantityGrams = norm.quantityGrams;
-      if (!twin.externalId) twin.externalId = externalId;
-      touch(twin);
-      res.updated++;
+      adopt[adoptKey] = twin.id;      // remember where this line ended up
+      let dirty = false;
+      if (norm.quantity && !twin.quantity) { twin.quantity = norm.quantity; dirty = true; }
+      if (norm.quantityGrams && !twin.quantityGrams) { twin.quantityGrams = norm.quantityGrams; dirty = true; }
+      if (!twin.externalId) { twin.externalId = externalId; dirty = true; }
+      // Nothing new to add: don't touch() it, or every sync would bump
+      // updatedAt and republish the whole item to the other phone for ever.
+      if (dirty) { touch(twin); res.updated++; } else res.skipped++;
       continue;
     }
 
@@ -972,7 +1107,7 @@ export function ingestPeerItems(peer, list, batchAt) {
       id,
       createdAt: at || now,
       updatedAt: now,
-      createdBy: peerId,               // surfaces as e.g. "familymix" in news
+      createdBy: peerByline(peerId),   // 'app:familymix' — never a family id
       externalId,
       raw: norm.title,
       title: norm.title,
@@ -1002,7 +1137,18 @@ export function ingestPeerItems(peer, list, batchAt) {
     res.added++;
   }
 
-  if (at) ack[peerId] = at;            // consumed — never ingest this batch again
+  ack[peerId] = at;                    // consumed — never ingest this batch again
+
+  // Tell the family a delivery arrived. applySync raises the same card for a
+  // phone that learned about the batch second-hand (it inherits the watermark
+  // before it ever reads the inbox, so it never ingests) — both paths key the
+  // card on the batch time, so whichever gets there first wins and there is
+  // exactly one card per delivery.
+  if (res.added) {
+    pushNews({ itemId: 'peer:' + at, kind: 'peer', by: null,
+      title: res.added + ' item' + (res.added === 1 ? '' : 's') + ' from ' + peerByline(peerId).slice(4),
+      note: 'Added to the shopping list', at }, !state.newsInit);
+  }
   save();
   return res;
 }

@@ -787,6 +787,9 @@ body.dump-focus #dumpText {
 .msg-photo { display: block; max-width: 180px; width: 100%; border-radius: 12px; margin-bottom: 4px; }
 .news-card.claim { background: radial-gradient(120% 120% at 20% 10%, #fff, #DDF0E4 92%); box-shadow: 0 6px 16px rgba(47,191,143,.2); }
 .news-card.claim .nc-line b { color: #1F8F68; }
+/* a delivery from a connected app — not a person, so it gets its own cool tone */
+.news-card.peer { background: radial-gradient(120% 120% at 20% 10%, #fff, #E7E3F7 92%); box-shadow: 0 6px 16px rgba(112,94,196,.2); }
+.news-card.peer .nc-line b { color: #6C5CC4; }
 
 /* once-a-day digest */
 #digestWrap { position: fixed; inset: 0; z-index: 58; }

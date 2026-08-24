@@ -285,6 +285,10 @@ function openNews() {
     else if (sub === 'ask') line = '<b>' + who + '</b> asked you to take';
     else if (sub === 'thanks') line = '<b>' + who + '</b> sent you';
     else if (sub === 'claim') line = '<b>' + who + '</b> is on it —';
+    // A delivery from a connected app has no author, so it must not fall
+    // through to the message wording — that renders an empty <b></b> and
+    // "messaged about", which reads like a bug.
+    else if (sub === 'peer') line = '<b>↯ A connected app</b> delivered';
     else line = '<b>' + who + '</b> messaged about';
     const showHeart = sub === 'done';                    // react to a completion
     const card = document.createElement('div');
@@ -304,6 +308,9 @@ function openNews() {
       popNews(card, ev.key);
     };
     card.querySelector('.nc-body').onclick = () => {
+      // a delivery card names a batch, not an item — send them to the list it
+      // landed on rather than doing nothing at all
+      if (sub === 'peer') { $('#newsWrap').hidden = true; window.stratosGoto('house'); return; }
       if (getItem(ev.itemId)) { $('#newsWrap').hidden = true; openSheet(ev.itemId); }
     };
     list.appendChild(card);
@@ -420,10 +427,10 @@ function itemCard(it) {
     '<div class="fc-title">' + esc(it.title) + '</div>' +
     '<div class="fc-chips">' +
       chip(typeIcon(it.type) + ' ' + it.type) +
-      chip(esc(memberName(it.scope))) +
-      chip(esc(it.category)) +
+      chip(memberName(it.scope)) +
+      chip(it.category) +
       (it.due ? chip('due ' + it.due) : '') +
-      (it.source ? chip('@ ' + esc(it.source)) : '') +
+      (it.source ? chip('@ ' + it.source) : '') +
       (it.loop?.every ? chip('↺ ~' + it.loop.every + 'd loop') : '') +
       kidsChip(it) +
       chip(it.visibility === 'private' ? 'private' : 'shared') +
@@ -432,7 +439,11 @@ function itemCard(it) {
   return el;
 }
 
-const chip = (t) => '<span class="minichip">' + t + '</span>';
+// Escapes its own text. Item fields reach these two from the household file, so
+// they are attacker-controlled in the only sense that matters here: a bug (or a
+// peer app) on any linked device could put markup in a title, category, source
+// or date. Escaping in the helper means no call site can forget.
+const chip = (t) => '<span class="minichip">' + esc(t) + '</span>';
 const typeIcon = (t) => ({ task: '☐', issue: '◐', supply: '◇', goal: '◎' }[t] || '•');
 
 function kidsChip(i) {
@@ -633,11 +644,11 @@ function itemRow(i, sort, opts = {}) {
       'background:radial-gradient(circle at 32% 30%, #ffffffb3, ' + sw.dot + ')"></span>' +
     '<span class="row-main"><span class="row-title">' + esc(i.title) + '</span>' +
     '<span class="row-chips">' +
-      (opts.hideCat ? '' : rchip('category', esc(i.category))) +
-      (!opts.hideScope && i.scope !== state.profile ? rchip('scope', esc(memberName(i.scope))) : '') +
+      (opts.hideCat ? '' : rchip('category', i.category)) +
+      (!opts.hideScope && i.scope !== state.profile ? rchip('scope', memberName(i.scope)) : '') +
       (i.due && !opts.noDue ? rchip('due', (boost >= 1.5 ? '⚑ ' : boost > 0 ? '◷ ' : 'due ') + i.due, boost > 0 ? 'hot' : '') : '') +
-      (i.quantity ? rchip('quantity', esc(i.quantity)) : '') +
-      (i.source ? rchip('source', '@ ' + esc(i.source)) : '') +
+      (i.quantity ? rchip('quantity', i.quantity) : '') +
+      (i.source ? rchip('source', '@ ' + i.source) : '') +
       (i.loop?.every && !opts.noDue ? rchip('loop', i.loop.every <= 1 ? '↺ daily' : '↺ ~' + i.loop.every + 'd') : '') +
       (kids.length ? '<button class="rchip" data-steps>◉ ' + kids.filter(k => k.status === 'done').length + '/' + kids.length + '</button>' : '') +
       (i.claimedBy ? '<span class="minichip claim">🙌 ' + esc(memberName(i.claimedBy)) + (i.claimedBy === state.profile ? ' (you)' : '') + '</span>' : '') +
@@ -661,7 +672,7 @@ function itemRow(i, sort, opts = {}) {
 }
 
 const rchip = (field, text, cls) =>
-  '<button class="rchip ' + (cls || '') + '" data-field="' + field + '">' + text + '</button>';
+  '<button class="rchip ' + (cls || '') + '" data-field="' + field + '">' + esc(text) + '</button>';
 
 // ---------- QUICK-EDIT POPOVER ----------
 
@@ -1447,6 +1458,9 @@ function syncDiag(c) {
   // a connected app is not a phone — keep it out of the "is the code right?" signal
   if (c.peerInboxes) parts.push(c.peerInboxes + ' connected app' + (c.peerInboxes > 1 ? 's' : ''));
   if (c.lastIngest && c.lastIngest.n) parts.push('received ' + c.lastIngest.n);
+  // a refused delivery is worth saying out loud — otherwise the connected app
+  // believes it delivered a batch the family never saw
+  if (c.lastIngest && c.lastIngest.reason) parts.push('⚠ ' + esc(c.lastIngest.reason));
   if (c.lastSync) parts.push('synced ' + new Date(c.lastSync).toLocaleTimeString());
   return parts.length ? parts.join(' · ') : (c.gasUrl && c.code ? 'ready — tap Sync now' : 'not set up yet');
 }

@@ -109,20 +109,35 @@ export async function syncNow() {
       peers++;
       if (remote) { readable++; changed = applySync('shared', remote) || changed; }
     }
+    // The single most common setup mistake, and it has to stay loud: other
+    // phones are publishing but not one of their slots decrypts, so the code on
+    // this phone is wrong. Excluding inbox slots above is what lets this test
+    // stay honest — a connected app is not a phone, and its unreadable slot
+    // must neither raise this nor mask it.
+    if (peers > 0 && readable === 0) {
+      throw new Error('The household code on this phone doesn’t match the other phone. Use the exact same code on both.');
+    }
 
     // Ingest peer inboxes. We deliberately do NOT write these slots: the
     // inbox is single-writer (the peer), and a client blanking it would
     // silently destroy any batch that arrived between the read and the write —
     // the Apps Script has no compare-and-swap to prevent that. A watermark
     // inside ingestPeerItems consumes each batch exactly once instead.
-    let ingested = 0;
+    //
+    // The SLOT NAME is the peer's identity — not the `peer` field inside the
+    // payload, which the peer writes itself and could set to anything.
+    let ingested = 0, dropped = 0, reason = null;
     for (const [d, box] of inboxes) {
-      if (box.kind !== 'inbox' || !Array.isArray(box.inbox)) continue;
-      const r = ingestPeerItems(box.peer || d, box.inbox, box.at);
+      if (box.kind !== 'inbox') { reason = reason || d + ': not an inbox payload'; continue; }
+      const r = ingestPeerItems(d, box.inbox, box.at);
       ingested += r.added + r.updated;
+      dropped += r.dropped;
+      // Only a refusal worth acting on is worth reporting; "already consumed"
+      // is the normal state of a standing inbox on every sync after the first.
+      if (r.reason && r.reason !== 'already consumed') reason = reason || d + ': ' + r.reason;
       if (r.added || r.updated) changed = true;
     }
-    if (ingested) cfg.lastIngest = { at: Date.now(), n: ingested };
+    if (ingested || dropped || reason) cfg.lastIngest = { at: Date.now(), n: ingested, dropped, reason };
     cfg.peerInboxes = inboxes.length;   // reported separately from real devices
     cfg.peerCount = peers; // other devices in this household — 0 means you're alone (check the code matches!)
     const snap = syncSnapshot('shared', state.profile);
