@@ -200,8 +200,15 @@ shopping list at a sensible urgency.
 **Types are checked, not coerced.** `quantityGrams` must be a JSON number;
 `text`, `quantity`, `category`, `source`, `note` and `neededOn` must be strings
 (or numbers). Send an array or an object and the value is dropped — you will not
-find `[object Object]` or `"a,b,c"` on the family's shopping list. Control
-characters are stripped from every string.
+find `[object Object]` or `"a,b,c"` on the family's shopping list.
+
+Every string is also sanitised: C0 **and** C1 controls (so U+0085 too), the soft
+hyphen, zero-width characters, the line/paragraph separators, the BOM, and the
+bidi embedding, override and isolate controls (U+202A–U+202E, U+2066–U+2069) are
+removed, then runs of whitespace are collapsed to one space and the result is
+trimmed before the length cap is applied. The bidi ones matter beyond tidiness:
+a single U+202E in a title reverses the rendering of everything after it on the
+shopping row, which is a display-spoofing primitive, not a formatting quirk.
 
 For the two **required** fields that is fatal rather than cosmetic: if
 `externalId` or `text` ends up empty — wrong JSON type, empty string, or nothing
@@ -240,8 +247,10 @@ said no.
 Stratos derives its own id from your slot **and** your `externalId`:
 
 ```js
-// `externalId` below is the CLIPPED one: control characters stripped,
-// trimmed, then truncated to 120 characters.
+// `externalId` below is the CLIPPED one: control and invisible characters
+// stripped, runs of whitespace collapsed to one space, trimmed, then
+// truncated to 120 characters. (Ordinary externalIds contain no whitespace,
+// so in practice this is just the trim and the cap.)
 const slot = "inboxfamilymix";                 // normalised, see §1
 
 // FNV-1a, 32-bit, over UTF-16 code units (charCodeAt) — NOT UTF-8 bytes.
@@ -294,11 +303,15 @@ depends on having won a race:
 
 - item is **`done`** → ignored (it was bought; it does not come back)
 - item is **tombstoned** (deleted here) → ignored
-- item **already exists** → only `title`, `quantity`, `quantityGrams` and the due
-  date are updated. Sizing, source, claim, snooze and notes the family edited are
-  untouched.
-- the family **already has it by hand** (same normalised name, scope and type) →
-  the amount is attached to *their* row instead of adding a second line.
+- item is **no longer shared** (the family made it private) → ignored, for good.
+  This holds whether the row is one Stratos minted for you or a family row your
+  line merged into.
+- item **already exists** → only `quantity`, `quantityGrams` and the due date are
+  updated — plus `title`, but *only* on a row Stratos minted for you. Sizing,
+  source, claim, snooze and notes the family edited are untouched.
+- the family **already has it by hand** (same normalised name, scope and type,
+  and not already claimed by any app) → the amount is attached to *their* row
+  instead of adding a second line.
 
 ### The name-match path, stated precisely
 
@@ -309,18 +322,22 @@ existing row only when **all** of these hold:
 - the row is `visibility: "shared"` — a peer can **never** reach a private item,
   by name or any other route. Every lookup path applies this check, so unsharing
   a row puts it permanently beyond a peer;
-- the row was **not** minted by a peer (no `px_` id), and carries no
-  `externalId` unless it is one *you* previously adopted (recorded under your
-  slot). `externalId`s are not namespaced between apps, so a bare string match
-  would let one app reach a row another app had claimed;
+- the row was **not** minted by a peer (no `px_` id) and carries **no**
+  `externalId` at all. A row that already has one belongs to whichever app
+  stamped it; that app reaches it again through its own stamp, and no other app
+  can reach it by name or by guessing the same `externalId` string;
 - it has no parent, is not `done`, and matches on `scope`, `type` and normalised
   name.
 
 **Normalised name** means: lowercased, everything outside `[a-z0-9æøåäöü\s]`
-stripped, tokens of two characters or fewer dropped, and these stopwords dropped
-— `the and for with this that from about need get buy some new`. So `"Buy milk"`
-and `"Milk"` are the same name. If that leaves nothing (a short name like `Æg`),
-the plain lowercased title is used instead.
+**replaced with a space** (not deleted — this is the part that surprises people:
+`"E-mail"` becomes `"e mail"`, and the one-character `"e"` is then dropped as a
+short token, so it normalises to `mail`, not `email`), the remaining tokens of
+two characters or fewer dropped, and these stopwords dropped — `the and for with
+this that from about need get buy some new`. What is left is joined with single
+spaces. So `"Buy milk"` and `"Milk"` are the same name, but `"Cafe-latte"` and
+`"Cafelatte"` are **not**. If normalisation leaves nothing at all (a short name
+like `Æg`), the plain lowercased title is used instead.
 
 When it merges, the peer may fill in `quantity` and `quantityGrams` **only if
 those are still empty**, and stamp its `externalId` on the row. It cannot rename
@@ -379,8 +396,13 @@ merged into a row the family had already written by hand (§3):
 Keys are `<slot>:<externalId>`; values are the Stratos item id the line actually
 lives on. If your `externalId` appears here, that line is on a family row, not a
 `px_` item of its own — which is why its title is theirs and not yours. Read it
-if you want to reflect that back in your own UI; ignore it otherwise. It is
-pruned on the same 90-day schedule as the tombstones.
+if you want to reflect that back in your own UI; ignore it otherwise.
+
+An entry lives as long as the row it points at does — it is **not** on a 90-day
+timer, so do not read a missing entry as "this line is old". Entries are dropped
+only when the row is deleted and its tombstone has aged out (90 days), or when
+the row stops carrying that `externalId` at all. The count is therefore bounded
+by the size of the family's list, not by how long the integration has run.
 
 Since the slot is yours alone, the safe pattern is: **keep writing your
 outstanding set, in batches of at most 200**, with a fresh, monotonically
@@ -558,6 +580,20 @@ Stated plainly so nobody is surprised:
 - **Old clients publish no `inboxAck` at all.** A pre-v67 phone in the household
   simply never appears in your delivery check. This is why §4 says take the max
   across slots and not the min.
+- **A v67 phone in the household is actively harmful — wait until every phone is
+  on v68 before your first write.** v67 keyed the watermark on the `peer` field
+  in your payload rather than on the slot, so it publishes `inboxAck.familymix`
+  where §4 tells you to read `inboxAck.inboxfamilymix` — you would never see an
+  ack. Worse, v67 minted item ids without the slot in them, so a household
+  running both versions creates **two of every item you push**, one per id
+  scheme. There is no compatibility shim for this; v67 was only ever live for a
+  few hours.
+- **One malformed line stalls the whole channel, silently, for ever.** Batches
+  are atomic (§3) and there is no per-item feedback, so a bad line in a standing
+  outstanding set means every re-send is refused and the watermark never moves.
+  The family sees the reason on their sync line; you see nothing but a stalled
+  ack. Validate `externalId` and `text` on your side before writing, and alert
+  on a watermark that has not advanced across several pushes.
 - **Stale device slots are never pruned.** A replaced phone's slot stays in the
   file at whatever watermark it last published, possibly 0, for ever. Same
   reason: max, not min.

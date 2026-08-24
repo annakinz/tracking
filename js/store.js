@@ -874,15 +874,7 @@ export function applySync(kind, remote) {
   // back. Pull those forward so the next prune can clear them.
   for (const [id, ts] of Object.entries(tomb)) if (ts > notFuture) tomb[id] = notFuture;
   for (const [id, ts] of Object.entries(tomb)) if (ts < cutoff) delete tomb[id];
-  // and drop adoption records whose row is long gone: once its tombstone has
-  // aged out there is nothing left to protect, and the map would otherwise grow
-  // by one entry per peer line for ever.
-  if (kind === 'shared') {
-    const adopt = peerAdoptMap();
-    for (const [k, itemId] of Object.entries(adopt)) {
-      if (!getItem(itemId) && !tomb[itemId]) delete adopt[k];
-    }
-  }
+  if (kind === 'shared') pruneAdoptMap(tomb);
   for (const [k, ts] of Object.entries(state.newsSeen || {})) if (ts < cutoff) delete state.newsSeen[k];
   if (watch) state.newsInit = true;   // past the first sync — future changes surface
   if (changed || seeding) save();
@@ -920,6 +912,37 @@ export function peerAckMap() { return state.peerAck || (state.peerAck = {}); }
 // the peer's px_ id and the family's row are two names for one thing, and a
 // delete of the row would not stop the next batch re-creating it.
 export function peerAdoptMap() { return state.peerAdopt || (state.peerAdopt = {}); }
+
+// Keep the adoption map bounded. Two kinds of entry are dead:
+//   - the row is gone AND its tombstone has aged out — there is nothing left to
+//     protect, so the record can go with it;
+//   - the row is alive but no longer carries that externalId — the family
+//     cleared it, or a different line took it over, so the record is stale.
+// What remains is one entry per LIVE merged row, which is bounded by the size
+// of the family's own list rather than by how long the integration has run.
+function pruneAdoptMap(tomb) {
+  const adopt = peerAdoptMap();
+  for (const [k, itemId] of Object.entries(adopt)) {
+    const row = getItem(itemId);
+    if (!row) { if (!tomb[itemId]) delete adopt[k]; continue; }
+    const eid = k.slice(k.indexOf(':') + 1);
+    if (row.externalId !== eid) delete adopt[k];
+  }
+}
+
+// applySync only runs for OTHER devices' slots, so a household with a single
+// phone would never prune anything at all. hsync calls this on every sync.
+export function pruneSyncMaps() {
+  const cutoff = Date.now() - 90 * 86400e3;
+  const notFuture = Date.now() + 5 * 60e3;
+  for (const kind of ['shared', 'private']) {
+    const tomb = tombFor(kind);
+    for (const [id, ts] of Object.entries(tomb)) if (ts > notFuture) tomb[id] = notFuture;
+    for (const [id, ts] of Object.entries(tomb)) if (ts < cutoff) delete tomb[id];
+  }
+  for (const [k, ts] of Object.entries(state.newsSeen || {})) if (ts < cutoff) delete state.newsSeen[k];
+  pruneAdoptMap(tombFor('shared'));
+}
 
 // A peer's identity is its SLOT NAME, never anything inside the payload. The
 // Apps Script decides and sanitises the slot key; the `peer` field in a batch
@@ -959,7 +982,17 @@ export function peerItemId(peerSlot, externalId) {
 // becomes '' rather than being stringified, so a peer can't smuggle
 // "[object Object]" into a title or "400,500,600" into an amount by sending the
 // wrong JSON type for a field.
-const clip = (v, n) => (typeof v === 'string' || typeof v === 'number' ? String(v) : '').replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, n);
+//
+// The strip covers more than C0: U+0085 and the C1 block are controls too, and
+// the bidi overrides (U+202E and friends) are a display-spoofing primitive —
+// one of those in a title reverses the rendering of the rest of the shopping
+// row. Zero-width and BOM go with them, since they are invisible by definition
+// and only ever arrive here by accident or on purpose.
+// Whitespace is collapsed BEFORE the length cap, so the cap counts characters
+// the family will actually see.
+const PEER_STRIP = /[\u0000-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u2028-\u2029\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/g;
+const clip = (v, n) => (typeof v === 'string' || typeof v === 'number' ? String(v) : '')
+  .replace(PEER_STRIP, '').replace(/\s+/g, ' ').trim().slice(0, n);
 
 // Fields a peer may influence. Everything else is Stratos's to decide and is
 // forced here rather than trusted — a peer must not be able to tick things off,
@@ -1051,7 +1084,7 @@ export function ingestPeerItems(slot, list, batchAt) {
       res.ignoredBatch = true;
       res.dropped = list.length;
       res.reason = 'item ' + (n + 1) + ' of ' + list.length +
-        ' is malformed (needs a non-empty string externalId and text) — batch refused';
+        ' is malformed (needs a non-empty externalId and text) — batch refused';
       return res;
     }
     prepared.push([externalId, norm]);
@@ -1071,13 +1104,27 @@ export function ingestPeerItems(slot, list, batchAt) {
 
     // --- refusals: never bring something back from the dead ---
     if (tomb[id] || (adoptedId && tomb[adoptedId])) { res.skipped++; continue; }   // deleted here
+    // Both lookups take the SAME visibility guard. A peer may only ever touch
+    // the shared household surface, and unsharing a row has to put it beyond a
+    // peer permanently — not merely until its shared tombstone ages out of the
+    // 90-day prune window, after which a re-push would land squarely on it.
+    // This applies to a row the peer minted itself just as much as to a family
+    // row it merged into: once the family makes it private it is theirs.
+    //
+    // Three ways this line may already be on the list, in order of certainty:
+    // the px_ row we minted; the row the adopt map says we merged into; or —
+    // when that map has been pruned or never reached this phone — a row still
+    // carrying our own (externalId, externalPeer) stamp. The third is what
+    // stops a phone without the map minting a duplicate beside a row that is
+    // already ours.
     const minted = getItem(id);
-    // The adopted row is looked up under the same visibility guard as every
-    // other path: unsharing a row must put it beyond a peer permanently, not
-    // only until its shared tombstone ages out of the prune window.
     const adopted = adoptedId ? getItem(adoptedId) : null;
-    const local = minted || (adopted && adopted.visibility === 'shared' ? adopted : null);
+    const rebound = minted || adopted ? null :
+      state.items.find(i => i.externalId === externalId && i.externalPeer === peerId);
+    const local = minted || adopted || rebound;
+    if (local && local.visibility !== 'shared') { res.skipped++; continue; }
     if (local && local.status === 'done') { res.skipped++; continue; }  // already bought
+    if (rebound) adopt[adoptKey] = rebound.id;      // put the record back
 
     if (local) {
       // Same item pushed again with a corrected amount. Update only what the
@@ -1110,7 +1157,11 @@ export function ingestPeerItems(slot, list, batchAt) {
     // are another app's to correct, and a row already carrying an externalId is
     // claimed — matching on the bare string would let one app reach a row a
     // different app adopted, since externalIds are not namespaced between apps.
-    // Only OUR own adoption, recorded under our slot, counts as a claim.
+    //
+    // The claim is recorded ON THE ROW (externalPeer), not only in the
+    // device-local adopt map — see the rebound lookup above. A row already
+    // carrying someone's externalId is therefore never a candidate here: this
+    // path is only ever for a row nobody has claimed yet.
     //
     // normPhrase drops tokens of two characters or fewer, so a short name like
     // "Æg" normalises to nothing. Falling back to the plain lowercased title
@@ -1119,8 +1170,7 @@ export function ingestPeerItems(slot, list, batchAt) {
     const phrase = normPhrase(norm.title) || norm.title.trim().toLowerCase();
     const samePhrase = (t) => (normPhrase(t) || String(t || '').trim().toLowerCase()) === phrase;
     const twin = phrase && state.items.find(i =>
-      i.visibility === 'shared' && !String(i.id).startsWith('px_') &&
-      (!i.externalId || adopt[adoptKey] === i.id) &&
+      i.visibility === 'shared' && !String(i.id).startsWith('px_') && !i.externalId &&
       !i.parent && i.status !== 'done' && i.scope === norm.scope &&
       i.type === norm.type && samePhrase(i.title));
     if (twin) {
@@ -1128,7 +1178,9 @@ export function ingestPeerItems(slot, list, batchAt) {
       let dirty = false;
       if (norm.quantity && !twin.quantity) { twin.quantity = norm.quantity; dirty = true; }
       if (norm.quantityGrams && !twin.quantityGrams) { twin.quantityGrams = norm.quantityGrams; dirty = true; }
-      if (!twin.externalId) { twin.externalId = externalId; dirty = true; }
+      // Stamp BOTH, together: the externalId without the owning slot is what
+      // let a second app reach this row by guessing the same string.
+      if (!twin.externalId) { twin.externalId = externalId; twin.externalPeer = peerId; dirty = true; }
       // Nothing new to add: don't touch() it, or every sync would bump
       // updatedAt and republish the whole item to the other phone for ever.
       if (dirty) { touch(twin); res.updated++; } else res.skipped++;
@@ -1141,6 +1193,7 @@ export function ingestPeerItems(slot, list, batchAt) {
       updatedAt: now,
       createdBy: peerByline(peerId),   // 'app:familymix' — never a family id
       externalId,
+      externalPeer: peerId,            // which app owns this line, on the row itself
       raw: norm.title,
       title: norm.title,
       label: null,

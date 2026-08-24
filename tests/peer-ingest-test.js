@@ -375,5 +375,60 @@ const ch2 = F.applySync('shared', { v: 1, at: T, items: {}, deleted: {},
   inboxAdopt: { 'familymix:fm:ghost': 'i9_long_gone' } });
 ok('...so re-receiving it does not mark state changed', ch2 === false);
 
+// ---------- a MINTED row that is unshared is beyond the peer too ----------
+// (the adopted-row case is covered above; this is the sibling lookup)
+T += 1000;
+A.ingestPeerItems('familymix', [item({ e: 'fm:wine', t: 'Vin', q: '2 fl' })], T);
+const wine = A.state.items.find(i => i.externalId === 'fm:wine');
+ok('the peer minted its own row', wine.id.startsWith('px_') && wine.visibility === 'shared');
+A.updateItem(wine.id, { visibility: 'private' });
+A.state.syncTomb.shared = {};                       // simulate the 90-day prune
+T += 1000;
+r = A.ingestPeerItems('familymix', [item({ e: 'fm:wine', t: 'Vin på flaske', q: '99 fl', quantityGrams: 9999, neededOn: '2026-12-24' })], T);
+const wineAfter = A.getItem(wine.id);
+ok('a re-push cannot rewrite an unshared minted row',
+  wineAfter.title === 'Vin' && wineAfter.quantity === '2 fl' && wineAfter.quantityGrams === null && wineAfter.due === null);
+ok('...it is refused, not turned into a second row', r.skipped === 1 && r.added === 0);
+ok('...and it stays private', wineAfter.visibility === 'private');
+
+// ---------- a phone with no adoption record still re-binds, not duplicates ----------
+T += 1000;
+const bound = A.addItem({ title: 'Yoghurt', scope: 'house', type: 'supply', category: 'groceries' });
+T += 1000;
+A.ingestPeerItems('familymix', [item({ e: 'fm:yog', t: 'Yoghurt', q: '500 g' })], T);
+ok('the line merged onto the family row', A.getItem(bound.id).externalId === 'fm:yog');
+ok('...and the owning app is stamped on the row itself', A.getItem(bound.id).externalPeer === 'familymix');
+delete A.state.peerAdopt['familymix:fm:yog'];       // the map is device-local and pruned
+T += 1000;
+r = A.ingestPeerItems('familymix', [item({ e: 'fm:yog', t: 'Yoghurt', q: '750 g' })], T);
+ok('losing the adoption record does NOT mint a duplicate',
+  A.state.items.filter(i => i.title === 'Yoghurt').length === 1);
+ok('...it re-binds to the same row', A.getItem(bound.id).quantity === '750 g');
+
+// ---------- but another app still cannot ride that externalId ----------
+T += 1000;
+r = A.ingestPeerItems('inboxotherapp', [item({ e: 'fm:yog', t: 'Yoghurt', q: '5 kg' })], T);
+ok('a different app is not let onto the claimed row', A.getItem(bound.id).quantity === '750 g');
+ok('...it gets its own line', r.added === 1);
+
+// ---------- C1 and bidi controls never reach the shopping row ----------
+T += 1000;
+A.ingestPeerItems('familymix', [item({ e: 'fm:spoof', t: 'Melk‮gnirts​', q: 'xy' })], T);
+const spoof = A.state.items.find(i => i.externalId === 'fm:spoof');
+ok('C1 controls are stripped', !/[-]/.test(spoof.title + spoof.quantity));
+ok('bidi overrides are stripped', !/[‪-‮⁦-⁩]/.test(spoof.title));
+ok('zero-width characters are stripped', !/[​-‏﻿]/.test(spoof.title));
+
+// ---------- the adoption map stays bounded ----------
+T += 1000;
+const stale = A.addItem({ title: 'Kanel', scope: 'house', type: 'supply', category: 'groceries' });
+T += 1000;
+A.ingestPeerItems('familymix', [item({ e: 'fm:kanel', t: 'Kanel', q: '50 g' })], T);
+ok('an adoption is recorded', A.peerAdoptMap()['familymix:fm:kanel'] === stale.id);
+A.updateItem(stale.id, { externalId: null });        // the family clears it
+A.pruneSyncMaps();
+ok('a stale adoption record is pruned', !A.peerAdoptMap()['familymix:fm:kanel']);
+ok('...while a live one is kept', A.peerAdoptMap()['familymix:fm:yog'] === bound.id);
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

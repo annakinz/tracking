@@ -8,7 +8,7 @@
 // sees ciphertext. Each device writes only its own slot in the file, so there
 // is no clobbering — the merge (store.js applySync) happens on the phone.
 
-import { state, save, syncConfig, syncSnapshot, applySync, isPeerInboxSlot, ingestPeerItems } from './store.js';
+import { state, save, syncConfig, syncSnapshot, applySync, isPeerInboxSlot, ingestPeerItems, pruneSyncMaps } from './store.js';
 
 let syncing = false;
 let onStatus = () => {};
@@ -138,6 +138,10 @@ export async function syncNow() {
       if (r.added || r.updated) changed = true;
     }
     if (ingested || dropped || reason) cfg.lastIngest = { at: Date.now(), n: ingested, dropped, reason };
+    // Tombstones, seen-news keys and adoption records age out inside applySync,
+    // which only runs for OTHER devices' slots — so a household with one phone
+    // would never prune at all. Do it here, where every sync passes.
+    pruneSyncMaps();
     cfg.peerInboxes = inboxes.length;   // reported separately from real devices
     cfg.peerCount = peers; // other devices in this household — 0 means you're alone (check the code matches!)
     const snap = syncSnapshot('shared', state.profile);
