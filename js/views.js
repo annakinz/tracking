@@ -9,6 +9,7 @@ import {
   backupList, restoreBackup, buyItem, shopSuggestions,
   takeLastLearned, learnedRules, forgetRule, forgetAllRules,
   getWorkView, setWorkView, inWorkView, hasWorkItems, deriveLabel, shortLabel, validDue,
+  storageFull,
 } from './store.js';
 import { parseDump, classifyOne, classifyDump, aisleOf } from './classify.js';
 import { agentClassify, agentPhotoTasks, getKey, setKey, testKey, lastAgentError } from './agent.js';
@@ -490,7 +491,9 @@ export function renderLists() {
   let items = state.items.filter(i => visibleTo(i, state.profile) && inWorkView(i));
   if (personFilterVal !== 'all') items = items.filter(i => i.scope === personFilterVal);
   if (vis === 'shared') items = items.filter(i => i.visibility === 'shared');
-  if (vis === 'private') items = items.filter(i => i.visibility === 'private' && i.createdBy === state.profile);
+  // visibleTo knows that whoever unshared a row owns it, which is not always
+  // whoever created it — reuse it rather than re-deriving ownership here.
+  if (vis === 'private') items = items.filter(i => i.visibility === 'private' && visibleTo(i, state.profile));
 
   const allActive = items.filter(i => i.status !== 'done');
   // subtasks live inside their parent's sheet, not as top-level rows —
@@ -1451,6 +1454,9 @@ function learnedRulesHtml() {
 
 // One-line health readout: shared items pushed, last sync, and any error.
 function syncDiag(c) {
+  // A failed local write outranks anything about the network: nothing you see
+  // on this screen is being kept if storage is full.
+  if (storageFull) return '⚠ This phone’s storage is full — changes are not being saved. Export a backup, then delete some photos from items.';
   if (c.lastError) return '⚠ ' + esc(c.lastError);
   const parts = [];
   if (typeof c.peerCount === 'number') parts.push(c.peerCount === 0 ? '0 other devices — check the code matches' : c.peerCount + ' other device' + (c.peerCount > 1 ? 's' : '') + ' linked');
