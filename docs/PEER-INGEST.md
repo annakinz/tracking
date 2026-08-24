@@ -1,6 +1,8 @@
 # Peer ingest: adding items to a Stratos household from another app
 
-**Status:** implemented and shipped in Stratos v67.
+**Status:** implemented and shipped in Stratos v68. Code against v68, not v67 —
+v67 shipped with a different `inboxAck` key and several bugs found in review,
+and the differences are not backward-compatible.
 **Audience:** an app that wants to put items on a family's Stratos list — FamilyMix
 is the first, but nothing here is specific to it.
 

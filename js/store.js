@@ -848,7 +848,12 @@ export function applySync(kind, remote) {
   if (kind === 'shared' && remote.inboxAdopt && typeof remote.inboxAdopt === 'object') {
     const adopt = peerAdoptMap();
     for (const [k, v] of Object.entries(remote.inboxAdopt)) {
-      if (typeof v === 'string' && !adopt[k]) { adopt[k] = v; changed = true; }
+      if (typeof v !== 'string' || adopt[k]) continue;
+      // Don't adopt a record we would prune again at the bottom of this same
+      // function — otherwise a phone that still holds a pruned entry keeps
+      // handing it back, and we mark state changed on every sync for ever.
+      if (!getItem(v) && !tomb[v]) continue;
+      adopt[k] = v; changed = true;
     }
   }
   // one card for a whole peer delivery, not one per grocery
