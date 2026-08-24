@@ -10,6 +10,7 @@ Plain Node, no dependencies, no build. From the repo root:
 node tests/peer-ingest-test.js
 node tests/peer-transport-test.js
 node tests/doc-example-test.js
+node tests/upgrade-test.js
 ```
 
 Each prints `N passed, 0 failed` and exits non-zero on a failure.
@@ -28,6 +29,10 @@ Stratos byte for byte.
 **`doc-example-test.js`** — extracts the worked example from §8 of the markdown
 at run time and executes it. Not a copy of the example: the example itself. If
 the code in the doc stops working, this fails.
+
+**`upgrade-test.js`** — a phone sitting on an older build force-updates: its
+stored state loads, renders and syncs with none of the new maps present, and a
+peer batch lands on top of it correctly.
 
 The browser-level tests (escaping, the delivery card, the UI smoke pass) live
 outside the repo since they need Playwright.
