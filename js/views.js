@@ -8,7 +8,7 @@ import {
   claimItem, snoozeItem, isSnoozed, setDailyChore, finishedToday, openLoad, digestSeenToday, markDigestSeen,
   backupList, restoreBackup, buyItem, shopSuggestions,
   takeLastLearned, learnedRules, forgetRule, forgetAllRules,
-  getWorkView, setWorkView, inWorkView, hasWorkItems, deriveLabel, shortLabel,
+  getWorkView, setWorkView, inWorkView, hasWorkItems, deriveLabel, shortLabel, validDue,
 } from './store.js';
 import { parseDump, classifyOne, classifyDump, aisleOf } from './classify.js';
 import { agentClassify, agentPhotoTasks, getKey, setKey, testKey, lastAgentError } from './agent.js';
@@ -636,6 +636,7 @@ function itemRow(i, sort, opts = {}) {
       (opts.hideCat ? '' : rchip('category', esc(i.category))) +
       (!opts.hideScope && i.scope !== state.profile ? rchip('scope', esc(memberName(i.scope))) : '') +
       (i.due && !opts.noDue ? rchip('due', (boost >= 1.5 ? '⚑ ' : boost > 0 ? '◷ ' : 'due ') + i.due, boost > 0 ? 'hot' : '') : '') +
+      (i.quantity ? rchip('quantity', esc(i.quantity)) : '') +
       (i.source ? rchip('source', '@ ' + esc(i.source)) : '') +
       (i.loop?.every && !opts.noDue ? rchip('loop', i.loop.every <= 1 ? '↺ daily' : '↺ ~' + i.loop.every + 'd') : '') +
       (kids.length ? '<button class="rchip" data-steps>◉ ' + kids.filter(k => k.status === 'done').length + '/' + kids.length + '</button>' : '') +
@@ -701,6 +702,13 @@ function openQuickEdit(id, field, anchor) {
     const srcs = [...new Set(state.items.map(x => x.source).filter(Boolean))];
     options = srcs.map(s => ({ label: s, on: s === i.source, apply: { source: s } }));
     options.push({ label: 'Clear', on: !i.source, apply: { source: null } });
+  } else if (field === 'quantity') {
+    // Amounts come from peer apps (FamilyMix pushes exact recipe quantities) or
+    // by hand. Presets cover the common cases; "edit all…" types anything else.
+    title = 'Amount';
+    const presets = ['1', '2', '250 g', '500 g', '1 kg', '1 l'];
+    options = presets.map(q => ({ label: q, on: q === i.quantity, apply: { quantity: q } }));
+    options.push({ label: 'Clear', on: !i.quantity, apply: { quantity: null } });
   } else if (field === 'loop') {
     title = 'Loop';
     const hist = i.loop?.history || [];
@@ -938,7 +946,8 @@ function renderShop(body, active, done) {
     el.className = 'shop-item' + (checked ? ' done' : '') + (crit ? ' crit' : '');
     el.innerHTML =
       '<button class="pk-check' + (checked ? ' on' : '') + '" aria-label="got it">' + (checked ? '✓' : '') + '</button>' +
-      '<span class="shop-title">' + esc(i.title) + '</span>' +
+      '<span class="shop-title">' + esc(i.title) +
+        (i.quantity ? '<span class="qty">' + esc(i.quantity) + '</span>' : '') + '</span>' +
       (crit ? '<span class="shop-flag">⚑ ' + esc(restockLabel(i)) + '</span>' : '') +
       (i.source && houseSourceVal === 'all' ? '<span class="minichip">@ ' + esc(i.source) + '</span>' : '') +
       (splittable(i) ? '<button class="shop-split" title="split at commas into separate items">✂</button>' : '');
@@ -1176,12 +1185,13 @@ export function openSheet(id) {
       '<label>Who <select id="shScope">' + famOpts + '</select></label>' +
       '<label>Category <input id="shCat" list="catList" value="' + esc(i.category) + '">' +
         '<datalist id="catList">' + cats.map(c => '<option value="' + esc(c) + '">').join('') + '</datalist></label>' +
-      '<label>Due <input type="date" id="shDue" value="' + (i.due || '') + '"></label>' +
+      '<label>Amount <input id="shQty" placeholder="400 g" value="' + esc(i.quantity || '') + '"></label>' +
+      '<label>Due <input type="date" id="shDue" value="' + esc(i.due || '') + '"></label>' +
       '<label>Source <input id="shSource" list="srcList" placeholder="Netto, Wolt…" value="' + esc(i.source || '') + '">' +
         '<datalist id="srcList">' + [...new Set(state.items.map(x => x.source).filter(Boolean))]
           .map(s => '<option value="' + esc(s) + '">').join('') + '</datalist></label>' +
       '<label>Loop: every <input type="number" id="shLoop" min="1" step="1" placeholder="—" value="' +
-        (i.loop?.every ?? '') + '"> days' +
+        esc(i.loop?.every ?? '') + '"> days' +
         (i.loop?.auto && i.loop?.every ? ' <span class="hint">(learned)</span>' : '') + '</label>' +
     '</div>' +
     catChips +
@@ -1194,7 +1204,7 @@ export function openSheet(id) {
       '<button id="shDaily" class="chip' + (i.loop && i.loop.every <= 1 ? ' on' : '') + '">🔁 Daily chore</button>' +
       '<button id="shSnooze" class="chip">😴 ' + (i.snoozeUntil ? 'Snoozed' : 'Snooze') + '</button>' +
     '</div>' +
-    (i.due ? '<a class="chip big-chip cal" target="_blank" rel="noopener" href="' + gcalUrl(i) + '">↗ Add to Google Calendar</a>' : '') +
+    (validDue(i.due) ? '<a class="chip big-chip cal" target="_blank" rel="noopener" href="' + esc(gcalUrl(i)) + '">↗ Add to Google Calendar</a>' : '') +
     '<div class="group-head">magnitude · tap to resize</div>' +
     '<div class="dimrows">' + dimRows + '</div>' +
     '<div class="group-head">notes</div>' +
@@ -1328,6 +1338,7 @@ export function openSheet(id) {
     updateItem(id, {
       title: $('#shTitle').value.trim() || i.title,
       label: $('#shLabel').value.trim() || null,
+      quantity: $('#shQty').value.trim() || null,
       type: $('#shType').value,
       scope: $('#shScope').value,
       category: $('#shCat').value.trim() || i.category,
@@ -1433,6 +1444,9 @@ function syncDiag(c) {
   const parts = [];
   if (typeof c.peerCount === 'number') parts.push(c.peerCount === 0 ? '0 other devices — check the code matches' : c.peerCount + ' other device' + (c.peerCount > 1 ? 's' : '') + ' linked');
   if (typeof c.lastSharedCount === 'number') parts.push(c.lastSharedCount + ' shared items');
+  // a connected app is not a phone — keep it out of the "is the code right?" signal
+  if (c.peerInboxes) parts.push(c.peerInboxes + ' connected app' + (c.peerInboxes > 1 ? 's' : ''));
+  if (c.lastIngest && c.lastIngest.n) parts.push('received ' + c.lastIngest.n);
   if (c.lastSync) parts.push('synced ' + new Date(c.lastSync).toLocaleTimeString());
   return parts.length ? parts.join(' · ') : (c.gasUrl && c.code ? 'ready — tap Sync now' : 'not set up yet');
 }
@@ -1459,6 +1473,7 @@ function wireSyncSettings() {
 
 // One-tap prefilled Google Calendar event (all-day on the due date).
 function gcalUrl(i) {
+  if (!validDue(i.due)) return '';        // never build a link from a junk date
   const start = i.due.replace(/-/g, '');
   const end = new Date(new Date(i.due + 'T12:00:00').getTime() + 86400e3)
     .toISOString().slice(0, 10).replace(/-/g, '');

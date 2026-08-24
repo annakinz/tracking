@@ -4,7 +4,7 @@ const DB_KEY = 'stratos.v1';
 
 // Build number — bump together with the service-worker CACHE in sw.js on
 // every deploy. Shown in Settings so you can confirm your phone is current.
-export const BUILD = '66';
+export const BUILD = '67';
 
 export const DIM_ORDER = ['priority', 'effort', 'difficulty', 'dread', 'restock'];
 
@@ -170,6 +170,12 @@ export function addItem(fields) {
     raw: fields.raw || fields.title,
     title: fields.title,
     label: fields.label || null,      // optional short name for bubbles
+    // How much to buy. `quantity` is the display string ("400 g"); the optional
+    // `quantityGrams` is a machine-readable companion so amounts can be summed
+    // or compared without parsing text. Peer apps (see docs/PEER-INGEST.md)
+    // depend on this being a first-class field rather than glued into the title.
+    quantity: (fields.quantity || '').trim() || null,
+    quantityGrams: typeof fields.quantityGrams === 'number' ? fields.quantityGrams : null,
     type: fields.type || 'task',
     scope,
     category: fields.category || 'general',
@@ -446,8 +452,14 @@ export function insertStratum(dimId, atIdx, label) {
 
 // The effective "needed by" moment: an explicit due date, or for loop items
 // the predicted next need (last completion + learned cycle).
+// Dates reach date maths and an HTML attribute, and items arrive over sync from
+// devices (and now peer apps) we don't control — so a due date is only ever
+// trusted if it is literally YYYY-MM-DD.
+export const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+export const validDue = (d) => (ISO_DATE.test(String(d || '')) ? d : null);
+
 export function effDueMs(item) {
-  if (item.due) return new Date(item.due + 'T23:59:59').getTime();
+  if (validDue(item.due)) return new Date(item.due + 'T23:59:59').getTime();
   if (item.loop?.every && item.doneAt) return item.doneAt + item.loop.every * 86400e3;
   return null;
 }
@@ -679,7 +691,10 @@ export function syncSnapshot(kind, me) {
     else if (kind === 'private' && it.visibility === 'private' && mine) items[it.id] = slim(it);
   }
   const snap = { v: 1, items, deleted: { ...tombFor(kind) }, at: Date.now() };
-  if (kind === 'shared') snap.packing = packSnapshot(); // packing rides the shared file
+  if (kind === 'shared') {
+    snap.packing = packSnapshot();          // packing rides the shared file
+    snap.inboxAck = { ...peerAckMap() };    // how far each peer's inbox is consumed
+  }
   return snap;
 }
 
@@ -698,11 +713,16 @@ function pushNews(ev, seeding) {
 
 // Decide whether an incoming shared item is news for me. prevStatus is the
 // local status before the merge (undefined = the item is new to me).
+const isFamilyMember = (id) => state.family.some(f => f.id === id);
+
 function detectNews(it, prevStatus, seeding) {
   if (it.visibility !== 'shared') return;
   const me = state.profile;
   if (prevStatus === undefined) {
     if (!it.createdBy || it.createdBy === me) return;    // my own item, or unknown
+    // Items from a peer app arrive a dozen at a time (a week's groceries).
+    // applySync counts those and raises ONE summary card instead.
+    if (!isFamilyMember(it.createdBy)) return;
     if (it.status === 'done') {
       // already finished when it reaches me: news only if someone else did it
       if (it.doneBy && it.doneBy !== me)
@@ -750,12 +770,18 @@ function scanClaim(it, prevClaim, seeding) {
 // Merge a downloaded file into local state; returns true if anything changed.
 export function applySync(kind, remote) {
   if (!remote || typeof remote !== 'object') return false;
+  // A peer inbox is not a device snapshot — hsync drains it separately. Bail
+  // out here so a peer payload can never be merged as if it were items.
+  if (remote.kind === 'inbox') return false;
   let changed = false;
+  let peerAdds = 0;
   const tomb = tombFor(kind);
   // only the shared household file carries news; seed silently the first time
   const watch = kind === 'shared';
   const seeding = watch && !state.newsInit;
-  for (const [id, ts] of Object.entries(remote.deleted || {})) {
+  const notFuture = Date.now() + 5 * 60e3;   // small allowance for clock skew
+  for (const [id, rawTs] of Object.entries(remote.deleted || {})) {
+    const ts = Math.min(Number(rawTs) || 0, notFuture);
     if (!tomb[id] || ts > tomb[id]) tomb[id] = ts;
     const local = getItem(id);
     // Only ever delete an item that still belongs to THIS file's visibility.
@@ -773,15 +799,30 @@ export function applySync(kind, remote) {
     if (tomb[it.id] && tomb[it.id] >= (it.updatedAt || 0)) continue; // deleted newer locally
     const local = getItem(it.id);
     if (!local) {
-      state.items.push({ ...it, media: [] }); changed = true;
+      state.items.push({ ...it, due: validDue(it.due), media: [] }); changed = true;
+      if (watch && it.visibility === 'shared' && it.createdBy && !isFamilyMember(it.createdBy)) peerAdds++;
       if (watch) { detectNews(it, undefined, seeding); scanMessages(it, seeding); scanClaim(it, undefined, seeding); }
     } else if ((it.updatedAt || 0) > (local.updatedAt || 0)) {
       const prev = local.status, prevClaim = local.claimedBy, prevNote = local.doneNote;
       const idx = state.items.findIndex(x => x.id === it.id);
-      state.items[idx] = { ...it, media: local.media || [] }; // keep local photos
+      state.items[idx] = { ...it, due: validDue(it.due), media: local.media || [] }; // keep local photos
       changed = true;
       if (watch) { detectNews(it, prev, seeding); scanDoneNote(it, prev, prevNote, seeding); scanMessages(it, seeding); scanClaim(it, prevClaim, seeding); }
     }
+  }
+  // adopt the highest watermark anyone has reached
+  if (kind === 'shared' && remote.inboxAck && typeof remote.inboxAck === 'object') {
+    const ack = peerAckMap();
+    for (const [p, ts] of Object.entries(remote.inboxAck)) {
+      const n = Number(ts) || 0;
+      if (n > (ack[p] || 0)) { ack[p] = n; changed = true; }
+    }
+  }
+  // one card for a whole peer delivery, not one per grocery
+  if (peerAdds && !seeding) {
+    pushNews({ itemId: 'peer:' + (remote.at || Date.now()), kind: 'peer', by: null,
+      title: peerAdds + ' item' + (peerAdds === 1 ? '' : 's') + ' from a connected app',
+      note: 'Added to the shopping list', at: remote.at || Date.now() }, seeding);
   }
   // packing lists ride the shared file too — merge them with their own
   // per-item newest-wins so both phones can pack a trip together
@@ -793,6 +834,177 @@ export function applySync(kind, remote) {
   if (watch) state.newsInit = true;   // past the first sync — future changes surface
   if (changed || seeding) save();
   return changed;
+}
+
+// ---------- peer ingest: a supported way for other apps to add items ----------
+// Full contract: docs/PEER-INGEST.md
+//
+// A peer app (FamilyMix plans the week's meals, so it knows the exact grocery
+// quantities before anyone leaves the house) writes ONE reserved slot in the
+// household sync store — an "inbox" — encrypted with the household key like
+// everything else.
+//
+// THE INBOX IS SINGLE-WRITER. Stratos reads it and never writes it. An earlier
+// design had each client blank the slot after ingesting ("drain"), but the
+// Apps Script offers no compare-and-swap, so a batch written between a client's
+// read and its blanking write was silently destroyed — the peer would believe
+// delivery succeeded and the family would simply never see those items.
+//
+// Instead each client keeps a WATERMARK per peer and ingests a batch only when
+// batch.at is newer than the watermark. A standing inbox is therefore consumed
+// exactly once per device, no writes race, and the peer learns what landed from
+// the `inboxAck` each device publishes in its own snapshot. The watermark rides
+// the shared snapshot too, so a phone that joins later inherits it instead of
+// re-ingesting a batch the family already dealt with.
+//
+// Ingest additionally refuses to reopen anything already done or deleted, so
+// correctness never rests on the watermark alone.
+
+export const isPeerInboxSlot = (dev) => /^inbox/i.test(String(dev || ''));
+export function peerAckMap() { return state.peerAck || (state.peerAck = {}); }
+
+// FNV-1a: a small deterministic hash so every device derives the SAME Stratos
+// id from a peer's externalId. Two phones ingesting the same batch therefore
+// mint identical ids and the ordinary newest-wins merge collapses them instead
+// of leaving the family with two of everything.
+function hash32(str) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h.toString(36);
+}
+// Always prefixed 'px_'. uid() only ever mints 'i<seq>_<base36>', so the two id
+// spaces cannot overlap: a peer can never address — let alone rewrite — an item
+// the family created, whatever externalId it chooses.
+export function peerItemId(externalId) {
+  const e = String(externalId);
+  return 'px_' + e.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40) + '_' + hash32(e);
+}
+
+const clip = (v, n) => String(v == null ? '' : v).replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, n);
+
+// Fields a peer may influence. Everything else is Stratos's to decide and is
+// forced here rather than trusted — a peer must not be able to tick things off,
+// reorder the family's list, or reach into their private items.
+function peerNormalize(raw) {
+  const text = clip(raw.text || raw.title || raw.name, 200).replace(/\s+/g, ' ');
+  if (!text) return null;
+  const type = raw.type === 'task' ? 'task' : 'supply';
+  const scope = state.family.some(f => f.id === raw.scope) ? raw.scope : 'house';
+  const category = clip(raw.category, 40).toLowerCase() || (type === 'supply' ? 'groceries' : 'errands');
+  const grams = Number(raw.quantityGrams);
+  // A date is the one peer-settable value that reaches an HTML attribute, so it
+  // is format-checked here as well as escaped at the sink.
+  const neededOn = /^\d{4}-\d{2}-\d{2}$/.test(String(raw.neededOn || '')) ? raw.neededOn : null;
+  return {
+    title: text.replace(/^(.)/, c => c.toUpperCase()),
+    quantity: clip(raw.quantity, 40) || null,
+    quantityGrams: Number.isFinite(grams) && grams > 0 ? grams : null,
+    type, scope, category,
+    notes: clip(raw.note || raw.notes, 500),
+    source: clip(raw.source, 40) || null,
+    neededOn,
+  };
+}
+
+const PEER_BATCH_MAX = 200;   // a runaway peer must not be able to inflate state
+
+// Ingest one peer batch. Returns { added, updated, skipped, ignoredBatch }.
+// Never throws on a malformed entry — a peer's bad line must not be able to
+// stop the family's sync.
+export function ingestPeerItems(peer, list, batchAt) {
+  const peerId = clip(peer, 24).toLowerCase().replace(/[^a-z0-9]/g, '') || 'peer';
+  const res = { added: 0, updated: 0, skipped: 0, ignoredBatch: false };
+  if (!Array.isArray(list)) return res;
+
+  // Watermark: a batch is consumed once per device. Re-reading the same
+  // standing inbox on every sync is therefore free, and a replayed older batch
+  // is refused outright.
+  const ack = peerAckMap();
+  const at = Number(batchAt) || 0;
+  if (at && at <= (ack[peerId] || 0)) { res.ignoredBatch = true; return res; }
+
+  const tomb = tombFor('shared');
+  const now = Date.now();
+
+  for (const raw of list.slice(0, PEER_BATCH_MAX)) {
+    if (!raw || typeof raw !== 'object') { res.skipped++; continue; }
+    const externalId = clip(raw.externalId, 120);
+    const norm = peerNormalize(raw);
+    if (!externalId || !norm) { res.skipped++; continue; }
+
+    const id = peerItemId(externalId);
+
+    // --- refusals: never bring something back from the dead ---
+    if (tomb[id]) { res.skipped++; continue; }              // deleted here
+    const local = getItem(id);
+    if (local && local.status === 'done') { res.skipped++; continue; }  // already bought
+
+    if (local) {
+      // Same item pushed again with a corrected amount. Update only what the
+      // peer owns; the family's own edits — sizing, source, claim, snooze —
+      // are left completely alone.
+      let dirty = false;
+      for (const k of ['title', 'quantity', 'quantityGrams']) {
+        if (local[k] !== norm[k]) { local[k] = norm[k]; dirty = true; }
+      }
+      if (norm.neededOn && local.due !== norm.neededOn) { local.due = norm.neededOn; dirty = true; }
+      if (dirty) { touch(local); res.updated++; } else res.skipped++;
+      continue;
+    }
+
+    // Not on the list under the peer's id — but the family may already have it
+    // by hand ("mælk"). Attach the amount to that rather than adding a second
+    // line. Both devices resolve to the same existing item, so this converges.
+    const phrase = normPhrase(norm.title);
+    const twin = phrase && state.items.find(i =>
+      !i.parent && i.status !== 'done' && i.scope === norm.scope &&
+      i.type === norm.type && normPhrase(i.title) === phrase);
+    if (twin) {
+      if (norm.quantity && !twin.quantity) twin.quantity = norm.quantity;
+      if (norm.quantityGrams && !twin.quantityGrams) twin.quantityGrams = norm.quantityGrams;
+      if (!twin.externalId) twin.externalId = externalId;
+      touch(twin);
+      res.updated++;
+      continue;
+    }
+
+    const item = {
+      id,
+      createdAt: at || now,
+      updatedAt: now,
+      createdBy: peerId,               // surfaces as e.g. "familymix" in news
+      externalId,
+      raw: norm.title,
+      title: norm.title,
+      label: null,
+      quantity: norm.quantity,
+      quantityGrams: norm.quantityGrams,
+      type: norm.type,
+      scope: norm.scope,
+      category: norm.category,
+      visibility: 'shared',            // forced: an inbox is a household surface
+      due: norm.neededOn,              // "needed on" is a due date in Stratos terms
+      source: norm.source,
+      loop: null,
+      parent: null,                    // forced: peers cannot nest into family trees
+      notes: norm.notes,
+      media: [],
+      dims: {},
+      status: 'active',
+    };
+    // supplies land at "Getting low" like any other, so they reach the shopping
+    // list at a sensible urgency instead of sitting unsized
+    if (item.type === 'supply') {
+      const rs = state.dims.restock.strata[3];
+      if (rs) item.dims.restock = { s: rs.id, f: 0.5, at: now };
+    }
+    state.items.push(item);
+    res.added++;
+  }
+
+  if (at) ack[peerId] = at;            // consumed — never ingest this batch again
+  save();
+  return res;
 }
 
 // ---------- news (the other person's changes, waiting to be reviewed) ----------

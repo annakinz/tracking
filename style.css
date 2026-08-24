@@ -963,3 +963,10 @@ body.dump-focus #dumpText {
 /* sheet: optional short "bubble name" under the title */
 .sh-labelrow { display: block; color: var(--muted); font-size: 12px; font-weight: 600; margin: -2px 0 4px; }
 .sh-labelrow input { width: 100%; margin-top: 4px; }
+
+/* how much to buy — reads as part of the item, not a separate chip */
+.shop-title .qty {
+  margin-left: 8px; font-size: 13px; font-weight: 700; color: var(--lilac-deep);
+  background: var(--lilac); border-radius: 999px; padding: 1px 8px; white-space: nowrap;
+}
+.shop-item.done .shop-title .qty { background: none; color: var(--faint); }

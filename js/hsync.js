@@ -8,7 +8,7 @@
 // sees ciphertext. Each device writes only its own slot in the file, so there
 // is no clobbering — the merge (store.js applySync) happens on the phone.
 
-import { state, save, syncConfig, syncSnapshot, applySync } from './store.js';
+import { state, save, syncConfig, syncSnapshot, applySync, isPeerInboxSlot, ingestPeerItems } from './store.js';
 
 let syncing = false;
 let onStatus = () => {};
@@ -95,16 +95,35 @@ export async function syncNow() {
     const got = await gasCall(cfg, { action: 'get', household: hid });
     const store = got.store || {};
     let peers = 0, readable = 0;
+    const inboxes = [];                       // ingested after the merge, see below
     for (const [d, blob] of Object.entries(store)) {
       if (d === dev) continue;
-      peers++;
       let remote = null;
-      try { remote = await decryptJSON(cfg.code, blob); readable++; } catch (e) { /* wrong code for this slot */ }
-      if (remote) changed = applySync('shared', remote) || changed;
+      try { remote = await decryptJSON(cfg.code, blob); } catch (e) { /* wrong code for this slot */ }
+      if (isPeerInboxSlot(d)) {
+        // A peer app's inbox, not a phone: it must not count as "another
+        // device linked", and it is ingested rather than merged.
+        if (remote) inboxes.push([d, remote]);
+        continue;
+      }
+      peers++;
+      if (remote) { readable++; changed = applySync('shared', remote) || changed; }
     }
-    if (peers > 0 && readable === 0) {
-      throw new Error('The household code on this phone doesn’t match the other phone. Use the exact same code on both.');
+
+    // Ingest peer inboxes. We deliberately do NOT write these slots: the
+    // inbox is single-writer (the peer), and a client blanking it would
+    // silently destroy any batch that arrived between the read and the write —
+    // the Apps Script has no compare-and-swap to prevent that. A watermark
+    // inside ingestPeerItems consumes each batch exactly once instead.
+    let ingested = 0;
+    for (const [d, box] of inboxes) {
+      if (box.kind !== 'inbox' || !Array.isArray(box.inbox)) continue;
+      const r = ingestPeerItems(box.peer || d, box.inbox, box.at);
+      ingested += r.added + r.updated;
+      if (r.added || r.updated) changed = true;
     }
+    if (ingested) cfg.lastIngest = { at: Date.now(), n: ingested };
+    cfg.peerInboxes = inboxes.length;   // reported separately from real devices
     cfg.peerCount = peers; // other devices in this household — 0 means you're alone (check the code matches!)
     const snap = syncSnapshot('shared', state.profile);
     await gasCall(cfg, { action: 'put', household: hid, device: dev, data: await encryptJSON(cfg.code, snap) });
