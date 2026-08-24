@@ -202,6 +202,38 @@ const idCases = ['familymix:2026-08-24:roede-linser', 'x', 'æøå — a very lo
 ok('the published id formula matches Stratos byte for byte',
   idCases.every(e => docPeerItemId('inboxfamilymix', e) === S.peerItemId('inboxfamilymix', e)));
 
+// 15. a wrong household code is REPORTED but must not freeze everything else
+T += 1000;
+await writeSlot('dStranger', 'ZZZZ-ZZZZ-ZZZZ-ZZZZ', { v: 1, items: {}, deleted: {}, at: T });
+delete files[await householdId(CODE)]['dEbbePhone'];      // only the unreadable phone remains
+T += 1000;
+await familyMixPush([
+  { externalId: 'fm:despite', text: 'Kommer alligevel', category: 'groceries', type: 'supply', scope: 'house' },
+], T);
+const myDev = S.syncConfig().deviceId;
+T += 1000;
+await H.syncNow();
+ok('the code mismatch is still reported', /doesn.t match/.test(S.syncConfig().lastError || ''));
+ok('...but peer ingest still runs', S.state.items.some(i => i.title === 'Kommer alligevel'));
+ok('...and this phone still publishes its own slot', !!files[await householdId(CODE)][myDev]);
+
+// 16. changing the household code mid-sync must not write into the old file
+T += 1000;
+const hid16 = await householdId(CODE);
+const slotsBefore = JSON.stringify(files[hid16][myDev]);
+const realCall = globalThis.fetch;
+let flipped = false;
+globalThis.fetch = async (url, opts) => {
+  const b = JSON.parse(opts.body);
+  if (b.action === 'get' && !flipped) { flipped = true; S.syncConfig().code = 'QQQQ-QQQQ-QQQQ-QQQQ'; }
+  return realCall(url, opts);
+};
+await H.syncNow();
+globalThis.fetch = realCall;
+ok('a code change mid-sync aborts the write', JSON.stringify(files[hid16][myDev]) === slotsBefore);
+ok('...and says so', /mid-sync/.test(S.syncConfig().lastError || ''));
+S.syncConfig().code = CODE;
+
 console.log(`\n${pass} passed, ${fail} failed`);
 globalThis.Date.now = realNow;
 if (fail) process.exit(1);

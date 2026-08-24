@@ -22,9 +22,9 @@ The handoff's crypto and addressing were exactly right. Four things were not.
 | Inferred | Actually |
 |---|---|
 | "the only call is `get`" | **A write already exists.** `{action:"put", household, device, data}` → `{ok:true}`. That is the whole transport you need. |
-| plaintext is `{items:{…}}` | The envelope is `{v:1, items:{…}, deleted:{…}, at:<ms>}`, plus `packing`, `inboxAck` and `inboxAdopt` on the shared file. `deleted` is the **only** delete channel; a payload without it can never remove anything. |
+| plaintext is `{items:{…}}` | The envelope is `{v:1, items:{…}, deleted:{…}, at:<ms>}`, plus `packing`, `inboxAck`, `inboxAdopt` and `inboxRefused` on the shared file. `deleted` is the **only** delete channel; a payload without it can never remove anything. |
 | `status` is `"open"｜"done"` | Statuses are **`inbox`｜`active`｜`done`**. `"open"` matches no view and the item would be invisible. |
-| merge is last-writer-wins with no ordering | It is **per-item newest-wins on `updatedAt`**, and it honours tombstones. An item with a missing or stale `updatedAt` is silently ignored forever. |
+| merge is last-writer-wins with no ordering | It is **per-item newest-wins on `updatedAt`**, and it honours tombstones. An *update* to an item the device already holds is ignored unless its `updatedAt` is strictly newer; an id the device has never seen is added regardless. A visibility change carries its own timestamp and wins over newer content, so nothing can quietly un-private a row. |
 
 Two further traps worth stating plainly:
 
@@ -308,10 +308,13 @@ depends on having won a race:
   line merged into.
 - item **already exists** → only `quantity`, `quantityGrams` and the due date are
   updated — plus `title`, but *only* on a row Stratos minted for you. Sizing,
-  source, claim, snooze and notes the family edited are untouched.
+  source, claim, snooze and notes the family edited are untouched. On a row the
+  family wrote, a value **a human has since changed is never overwritten** (see
+  below). Sizing, source, claim, snooze and notes are untouched everywhere.
 - the family **already has it by hand** (same normalised name, scope and type,
   and not already claimed by any app) → the amount is attached to *their* row
-  instead of adding a second line.
+  instead of adding a second line — but only if that phone has already synced
+  the family's row. See the known limit in §9.
 
 ### The name-match path, stated precisely
 
@@ -341,15 +344,33 @@ like `Æg`), the plain lowercased title is used instead.
 
 When it merges, the peer may fill in `quantity` and `quantityGrams` **only if
 those are still empty**, and stamp its `externalId` on the row. It cannot rename
-the row, resize it, change its category, or complete it. Corrections you push
-later update the amount; the family's title stands.
+the row, resize it, change its category, or complete it. The family's title
+stands permanently.
 
-Once merged, the row *is* your line. Delete it and Stratos remembers: the same
-`externalId` is refused on later batches rather than reappearing as a new `px_`
-item. That memory lasts **90 days** — the same window Stratos keeps any deletion
-for. After that the record is pruned along with the tombstone and a re-push
-creates a fresh item, exactly as it would for a family item deleted that long
-ago.
+Afterwards, on that row, you may **correct a value you set yourself but never
+overwrite one a person changed.** Stratos remembers what you last wrote:
+
+- the field is empty → you fill it;
+- the field still holds the value you last pushed → your correction applies;
+- a human has changed it since → your push is ignored, silently and for ever.
+
+That third case is why: §4 tells you to keep re-sending your outstanding set, so
+without it an unchanged weekly re-send would quietly revert an amount the family
+typed by hand, every week, with nothing on your side having changed at all. On a
+row Stratos minted for you there is no such restriction — that row is yours.
+
+Once merged, the row *is* your line. Two different kinds of memory then apply:
+
+- **Delete it** → the same `externalId` is refused on later batches rather than
+  reappearing as a new `px_` item. That memory lasts **90 days**, the same window
+  Stratos keeps any deletion for; after that a re-push creates a fresh item,
+  exactly as it would for a family item deleted that long ago.
+- **Make it private** → refused **permanently**. This one is deliberately not on
+  the 90-day clock: a deletion may be a change of mind, but "I do not want this
+  app to see this" has to keep holding. The refusal travels between the family's
+  phones (`inboxRefused` in the shared snapshot) so no phone can re-create the
+  row from a standing batch. Rotate to a new `externalId` and you get a new row
+  — the refusal is about that specific line, not about you.
 
 ---
 
@@ -452,6 +473,12 @@ What we *did* build, because it is real rather than theatre:
 - Every peer-settable field is type-checked, clamped, length-capped and
   control-character stripped; `neededOn` must be a real calendar date, not merely
   a well-shaped one.
+- A row the family takes private is refused permanently, and that refusal
+  travels between their phones — so no phone can put your line back from a
+  standing batch after its tombstone ages out.
+- A visibility change carries its own timestamp and beats newer content, so a
+  phone that hadn't yet heard about an unshare cannot undo it by touching the
+  row — nor take its content with it.
 - Incoming tombstone timestamps are clamped to now + 5 minutes of clock skew —
   and tombstones already stored are repaired on the next sync — so no slot can
   plant a far-future tombstone that never prunes and permanently blocks an item.
@@ -601,6 +628,16 @@ Stated plainly so nobody is surprised:
   family wrote by hand (§3), their wording wins permanently — later corrections
   update the amount but never the name. `inboxAdopt` (§4) tells you which lines
   those are.
+- **The name-match only runs on the phone that ingests the batch.** The watermark
+  is household-wide, so exactly one phone ingests and the others learn the result
+  over ordinary sync. If the family's hand-written row had not yet reached that
+  particular phone, no match happens and you get a second line beside theirs,
+  which stays. Rotating to next week's `externalId` gives the match another
+  chance. Nothing is lost either way — it is a duplicate row, not a dropped one.
+- **`inboxAdopt` is advisory.** Treat an entry as "this line merged into a row
+  the family wrote"; do not depend on the specific item id, which can differ
+  between device slots if the family happened to have two rows with the same
+  normalised name.
 - **Refusals are visible to the family, not to you.** A refused batch shows on
   the phone's sync line — e.g. `⚠ inboxfamilymix: batch of 250 refused — send at
   most 200 items per batch`. Your only signal is the absence of an ack, so treat

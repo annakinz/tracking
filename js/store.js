@@ -57,9 +57,30 @@ function load() {
   return freshState();
 }
 
+export let storageFull = false;
+
 export function save() {
   const json = JSON.stringify(state);
-  localStorage.setItem(DB_KEY, json);
+  try {
+    localStorage.setItem(DB_KEY, json);
+    storageFull = false;
+  } catch (e) {
+    // Out of quota. The backups are the only thing here we can afford to lose,
+    // so drop them and try once more; if that still fails, raise a flag the
+    // Settings screen can show rather than throwing into a caller that will
+    // swallow it. Losing the write silently is the one outcome to avoid.
+    try { localStorage.removeItem(BAK_KEY); } catch (e2) { /* nothing to drop */ }
+    try {
+      localStorage.setItem(DB_KEY, json);
+      storageFull = false;
+      console.warn('storage was full — local backups were dropped to make room');
+      return;
+    } catch (e3) {
+      storageFull = true;
+      console.warn('could not save: storage is full');
+      return;
+    }
+  }
   maybeBackup(json);
 }
 
@@ -317,6 +338,22 @@ export function updateItem(id, fields) {
   if (fields.visibility && fields.visibility !== oldVis) {
     if (oldVis === 'shared') tombFor('shared')[id] = Date.now();
     else tombFor('private')[id] = Date.now();
+    // Whoever made it private OWNS it from here. Without this, making a row
+    // private that you did not create — above all a row a connected app
+    // created, whose createdBy is 'app:familymix' and can never equal a
+    // profile — hides it from everybody AND drops it from both sync files, so
+    // the only copy left is an unreachable orphan in one phone's storage.
+    if (fields.visibility === 'private') item.privateBy = state.profile;
+    else item.privateBy = null;
+    // A visibility change is its own decision with its own clock. The merge
+    // compares these so a stale copy from a phone that hadn't heard yet can't
+    // quietly undo it — see applySync.
+    item.visAt = Date.now();
+    // A peer must not be able to put back a row the family took private, ever
+    // — not even after its tombstone ages out at 90 days on some other phone.
+    if (oldVis === 'shared' && item.externalPeer && item.externalId) {
+      peerRefusedMap()[item.externalPeer + ':' + item.externalId] = Date.now();
+    }
   }
   touch(item);
   save();
@@ -639,7 +676,9 @@ export function memberName(id) {
 }
 
 export function visibleTo(item, profile) {
-  return item.visibility !== 'private' || item.createdBy === profile;
+  // privateBy is who took it private, which is not always who created it — a
+  // row from a connected app has no creator profile at all.
+  return item.visibility !== 'private' || (item.privateBy || item.createdBy) === profile;
 }
 
 // Items the sizer will actually show you as dotted/unsized bubbles. This is the
@@ -680,6 +719,12 @@ export function importJSON(text) {
   const parsed = JSON.parse(text); // throws if invalid
   if (!parsed.items || !parsed.dims) throw new Error('not a Stratos export');
   state = parsed;
+  // The export carries this phone's sync slot name. Importing it onto a SECOND
+  // phone — which is exactly what Settings suggests export/import for — would
+  // give both phones the same slot, so each would overwrite the other's
+  // snapshot in the household file for ever while Settings cheerfully reported
+  // "0 other devices". A slot is per-device; mint a new one on the next sync.
+  if (state.sync) delete state.sync.deviceId;
   save();
 }
 
@@ -701,7 +746,7 @@ function slim(it) {
 export function syncSnapshot(kind, me) {
   const items = {};
   for (const it of state.items) {
-    const mine = it.createdBy === me;
+    const mine = (it.privateBy || it.createdBy) === me;
     if (kind === 'shared' && it.visibility === 'shared') items[it.id] = slim(it);
     else if (kind === 'private' && it.visibility === 'private' && mine) items[it.id] = slim(it);
   }
@@ -710,6 +755,7 @@ export function syncSnapshot(kind, me) {
     snap.packing = packSnapshot();          // packing rides the shared file
     snap.inboxAck = { ...peerAckMap() };    // how far each peer's inbox is consumed
     snap.inboxAdopt = { ...peerAdoptMap() }; // where merged peer lines ended up
+    snap.inboxRefused = { ...peerRefusedMap() }; // lines the family took private
   }
   return snap;
 }
@@ -826,6 +872,15 @@ export function applySync(kind, remote) {
       }
       if (watch) { detectNews(it, undefined, seeding); scanMessages(it, seeding); scanClaim(it, undefined, seeding); }
     } else if ((it.updatedAt || 0) > (local.updatedAt || 0)) {
+      // A visibility change is its own last-writer-wins, on its own clock. The
+      // tombstone loop above already refuses to delete across a visibility
+      // change; this loop was replacing across one, which is the same bug with
+      // a worse ending: an incoming SHARED copy would overwrite a row this
+      // phone had made PRIVATE — putting it back on the household list and
+      // taking its content with it — purely because some other phone touched
+      // the row before it heard about the unshare. Newer content must not beat
+      // a newer decision about who may see it.
+      if (local.visibility !== it.visibility && (local.visAt || 0) > (it.visAt || 0)) continue;
       const prev = local.status, prevClaim = local.claimedBy, prevNote = local.doneNote;
       const idx = state.items.findIndex(x => x.id === it.id);
       state.items[idx] = { ...it, due: validDue(it.due), media: local.media || [] }; // keep local photos
@@ -833,27 +888,26 @@ export function applySync(kind, remote) {
       if (watch) { detectNews(it, prev, seeding); scanDoneNote(it, prev, prevNote, seeding); scanMessages(it, seeding); scanClaim(it, prevClaim, seeding); }
     }
   }
-  // Adopt the highest watermark anyone has reached, clamped to now. Ingest
-  // already refuses a future-dated batch, so this only ever bites on a corrupt
-  // or hostile file — and clamping to now rather than now+skew matters, because
-  // a watermark parked even minutes ahead silently refuses live batches.
-  // Re-ingesting a batch is harmless (it is idempotent), so erring low is free.
+  // Adopt the highest watermark anyone has reached. A future value is IGNORED,
+  // not clamped: clamping to Date.now() re-parks our own watermark at "now" on
+  // every single merge, and "now" always sits above a live batch's `at`, so one
+  // bad slot would silently kill peer ingest on this phone for ever while it
+  // published an ack claiming everything had been consumed. Ingest refuses
+  // future-dated batches at the source, so dropping these is free.
   if (kind === 'shared' && remote.inboxAck && typeof remote.inboxAck === 'object') {
     const ack = peerAckMap();
     for (const [p, ts] of Object.entries(remote.inboxAck)) {
-      const n = Math.min(Number(ts) || 0, Date.now());
+      const n = Number(ts) || 0;
+      if (n > notFuture) continue;
       if (n > (ack[p] || 0)) { ack[p] = n; changed = true; }
     }
   }
-  if (kind === 'shared' && remote.inboxAdopt && typeof remote.inboxAdopt === 'object') {
-    const adopt = peerAdoptMap();
-    for (const [k, v] of Object.entries(remote.inboxAdopt)) {
-      if (typeof v !== 'string' || adopt[k]) continue;
-      // Don't adopt a record we would prune again at the bottom of this same
-      // function — otherwise a phone that still holds a pruned entry keeps
-      // handing it back, and we mark state changed on every sync for ever.
-      if (!getItem(v) && !tomb[v]) continue;
-      adopt[k] = v; changed = true;
+  // "do not let this app see this again" travels between phones and never expires
+  if (kind === 'shared' && remote.inboxRefused && typeof remote.inboxRefused === 'object') {
+    const ref = peerRefusedMap();
+    for (const [k, ts] of Object.entries(remote.inboxRefused)) {
+      const n = Math.min(Number(ts) || 0, notFuture);
+      if (n && !ref[k]) { ref[k] = n; changed = true; }
     }
   }
   // one card for a whole peer delivery, not one per grocery
@@ -874,7 +928,23 @@ export function applySync(kind, remote) {
   // back. Pull those forward so the next prune can clear them.
   for (const [id, ts] of Object.entries(tomb)) if (ts > notFuture) tomb[id] = notFuture;
   for (const [id, ts] of Object.entries(tomb)) if (ts < cutoff) delete tomb[id];
-  if (kind === 'shared') pruneAdoptMap(tomb);
+  // Adopt the other phone's adoption records only AFTER the prune. Before it,
+  // the test "would I prune this again?" was reading a tombstone this very call
+  // had just re-inserted from remote.deleted — so an entry whose row is long
+  // gone looked worth keeping, got re-adopted, was pruned three lines later,
+  // and came back on the next sync: changed=true for ever, which the app turns
+  // into a self-sustaining four-second sync loop.
+  if (kind === 'shared') {
+    const adopt = peerAdoptMap();
+    for (const [k, v] of Object.entries(remote.inboxAdopt || {})) {
+      if (typeof v !== 'string' || adopt[k]) continue;
+      const row = getItem(v);
+      if (!row && !tomb[v]) continue;                  // nothing left to protect
+      if (row && row.visibility !== 'shared') continue; // not ours to know about
+      adopt[k] = v; changed = true;
+    }
+    pruneAdoptMap(tomb);
+  }
   for (const [k, ts] of Object.entries(state.newsSeen || {})) if (ts < cutoff) delete state.newsSeen[k];
   if (watch) state.newsInit = true;   // past the first sync — future changes surface
   if (changed || seeding) save();
@@ -912,6 +982,12 @@ export function peerAckMap() { return state.peerAck || (state.peerAck = {}); }
 // the peer's px_ id and the family's row are two names for one thing, and a
 // delete of the row would not stop the next batch re-creating it.
 export function peerAdoptMap() { return state.peerAdopt || (state.peerAdopt = {}); }
+// '<slot>:<externalId>' -> when the family took that line private. This is the
+// one refusal that is NOT on the 90-day tombstone clock: a deletion is allowed
+// to age out, but "I do not want this app to see this" has to hold for good, or
+// the contract's promise that unsharing puts a row permanently beyond a peer is
+// only true until some other phone's tombstone prunes and re-mints the row.
+export function peerRefusedMap() { return state.peerRefused || (state.peerRefused = {}); }
 
 // Keep the adoption map bounded. Two kinds of entry are dead:
 //   - the row is gone AND its tombstone has aged out — there is nothing left to
@@ -925,6 +1001,10 @@ function pruneAdoptMap(tomb) {
   for (const [k, itemId] of Object.entries(adopt)) {
     const row = getItem(itemId);
     if (!row) { if (!tomb[itemId]) delete adopt[k]; continue; }
+    // A row the family made private is no longer the peer's business — and the
+    // map is published in the shared file, so leaving the entry there tells the
+    // app its line is still alive on a list it can no longer see.
+    if (row.visibility !== 'shared') { delete adopt[k]; continue; }
     const eid = k.slice(k.indexOf(':') + 1);
     if (row.externalId !== eid) delete adopt[k];
   }
@@ -933,6 +1013,11 @@ function pruneAdoptMap(tomb) {
 // applySync only runs for OTHER devices' slots, so a household with a single
 // phone would never prune anything at all. hsync calls this on every sync.
 export function pruneSyncMaps() {
+  // Past the first sync. This lives here rather than only in applySync because
+  // applySync runs solely for OTHER devices' slots: in a household with one
+  // phone it never ran at all, so newsInit stayed false for ever and every peer
+  // delivery card was swallowed by the first-sync seeding path.
+  state.newsInit = true;
   const cutoff = Date.now() - 90 * 86400e3;
   const notFuture = Date.now() + 5 * 60e3;
   for (const kind of ['shared', 'private']) {
@@ -1103,6 +1188,7 @@ export function ingestPeerItems(slot, list, batchAt) {
     const adoptedId = adopt[adoptKey];
 
     // --- refusals: never bring something back from the dead ---
+    if (peerRefusedMap()[adoptKey]) { res.skipped++; continue; }   // taken private, for good
     if (tomb[id] || (adoptedId && tomb[adoptedId])) { res.skipped++; continue; }   // deleted here
     // Both lookups take the SAME visibility guard. A peer may only ever touch
     // the shared household surface, and unsharing a row has to put it beyond a
@@ -1136,12 +1222,29 @@ export function ingestPeerItems(slot, list, batchAt) {
       // Absent means "no opinion", never "clear it". A correction batch that
       // omits `quantity` must not blank an amount — least of all one the family
       // typed onto their own row. Peers add and correct; they never erase.
+      //
+      // On a row the FAMILY wrote, the peer may fill a blank and may correct a
+      // value it put there itself — but it must not overwrite one a human
+      // changed. Without that distinction the "only if still empty" rule at the
+      // merge lasts exactly one push: the standing outstanding set §4 tells
+      // peers to re-send would silently revert an amount Anna typed by hand,
+      // every week, with no change on the peer's side at all. Comparing against
+      // what the peer last wrote (peerLast) tells the two cases apart. On a row
+      // Stratos minted for the peer, corrections apply outright — it is theirs.
       let dirty = false;
+      const last = local.peerLast || (local.peerLast = {});
+      const set = (k, v) => {
+        if (v == null || local[k] === v) return;
+        // family's row, and the value there is not the one we left → theirs
+        if (!minted && local[k] != null && local[k] !== last[k]) return;
+        local[k] = v; dirty = true;
+      };
       if (minted && norm.title && local.title !== norm.title) { local.title = norm.title; dirty = true; }
-      for (const k of ['quantity', 'quantityGrams']) {
-        if (norm[k] != null && local[k] !== norm[k]) { local[k] = norm[k]; dirty = true; }
-      }
-      if (norm.neededOn && local.due !== norm.neededOn) { local.due = norm.neededOn; dirty = true; }
+      set('quantity', norm.quantity);
+      set('quantityGrams', norm.quantityGrams);
+      set('due', norm.neededOn);
+      // remember what we pushed, whether or not it was applied
+      last.quantity = norm.quantity; last.quantityGrams = norm.quantityGrams; last.due = norm.neededOn;
       if (dirty) { touch(local); res.updated++; } else res.skipped++;
       continue;
     }
@@ -1169,10 +1272,15 @@ export function ingestPeerItems(slot, list, batchAt) {
     // family's.
     const phrase = normPhrase(norm.title) || norm.title.trim().toLowerCase();
     const samePhrase = (t) => (normPhrase(t) || String(t || '').trim().toLowerCase()) === phrase;
-    const twin = phrase && state.items.find(i =>
-      i.visibility === 'shared' && !String(i.id).startsWith('px_') && !i.externalId &&
-      !i.parent && i.status !== 'done' && i.scope === norm.scope &&
-      i.type === norm.type && samePhrase(i.title));
+    // Lowest id among the candidates, not "first in the array". Two phones hold
+    // state.items in different orders, so `find` would let them pick different
+    // rows for the same line and stamp the same externalId on both, with no way
+    // back. Sorting by id makes the choice identical everywhere.
+    const twin = !phrase ? null : state.items
+      .filter(i => i.visibility === 'shared' && !String(i.id).startsWith('px_') && !i.externalId &&
+        !i.parent && i.status !== 'done' && i.scope === norm.scope &&
+        i.type === norm.type && samePhrase(i.title))
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0];
     if (twin) {
       adopt[adoptKey] = twin.id;      // remember where this line ended up
       let dirty = false;
@@ -1181,6 +1289,9 @@ export function ingestPeerItems(slot, list, batchAt) {
       // Stamp BOTH, together: the externalId without the owning slot is what
       // let a second app reach this row by guessing the same string.
       if (!twin.externalId) { twin.externalId = externalId; twin.externalPeer = peerId; dirty = true; }
+      // what we left on their row, so a later push can tell its own value from
+      // one the family has since changed
+      twin.peerLast = { quantity: twin.quantity, quantityGrams: twin.quantityGrams, due: twin.due };
       // Nothing new to add: don't touch() it, or every sync would bump
       // updatedAt and republish the whole item to the other phone for ever.
       if (dirty) { touch(twin); res.updated++; } else res.skipped++;

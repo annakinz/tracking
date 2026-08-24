@@ -89,17 +89,25 @@ export async function syncNow() {
   if (!syncConfigured() || syncing) return;
   syncing = true; onStatus('syncing');
   let changed = false;
+  // Pin the code and URL for the whole run. syncNow awaits half a dozen times,
+  // and the household id is derived from the code — so re-reading cfg.code
+  // later means that editing the code mid-sync encrypts with the NEW key and
+  // writes it into the OLD household's file, which no phone on either code can
+  // then read. Everything below uses these locals.
+  const code = cfg.code;
+  const conn = { gasUrl: cfg.gasUrl };
+  let codeWarning = null;
   try {
-    const hid = await householdId(cfg.code);
+    const hid = await householdId(code);
     const dev = deviceId();
-    const got = await gasCall(cfg, { action: 'get', household: hid });
+    const got = await gasCall(conn, { action: 'get', household: hid });
     const store = got.store || {};
     let peers = 0, readable = 0;
     const inboxes = [];                       // ingested after the merge, see below
     for (const [d, blob] of Object.entries(store)) {
       if (d === dev) continue;
       let remote = null;
-      try { remote = await decryptJSON(cfg.code, blob); } catch (e) { /* wrong code for this slot */ }
+      try { remote = await decryptJSON(code, blob); } catch (e) { /* wrong code for this slot */ }
       if (isPeerInboxSlot(d)) {
         // A peer app's inbox, not a phone: it must not count as "another
         // device linked", and it is ingested rather than merged.
@@ -114,8 +122,14 @@ export async function syncNow() {
     // this phone is wrong. Excluding inbox slots above is what lets this test
     // stay honest — a connected app is not a phone, and its unreadable slot
     // must neither raise this nor mask it.
+    //
+    // Reported, NOT thrown. Aborting here would also skip peer ingest, the
+    // prune, and publishing this phone's own slot — so a single unreadable
+    // device slot (a corrupt write, a phone left behind by a code rotation)
+    // would silently freeze everything else too. Refusing to publish cannot
+    // make a wrong code right; saying so plainly can.
     if (peers > 0 && readable === 0) {
-      throw new Error('The household code on this phone doesn’t match the other phone. Use the exact same code on both.');
+      codeWarning = 'The household code on this phone doesn’t match the other phone. Use the exact same code on both.';
     }
 
     // Ingest peer inboxes. We deliberately do NOT write these slots: the
@@ -144,18 +158,31 @@ export async function syncNow() {
     pruneSyncMaps();
     cfg.peerInboxes = inboxes.length;   // reported separately from real devices
     cfg.peerCount = peers; // other devices in this household — 0 means you're alone (check the code matches!)
+    // Announce what already landed BEFORE the push. The merge and the ingest
+    // are done and saved by this point; if the upload then fails, the delivery
+    // is still on this phone — and because ingest is watermarked and the merge
+    // is idempotent, no later sync would ever raise the event again. The screen
+    // would sit there stale until something else happened to redraw it.
+    if (changed) { document.dispatchEvent(new CustomEvent('stratos:changed')); changed = false; }
     const snap = syncSnapshot('shared', state.profile);
-    await gasCall(cfg, { action: 'put', household: hid, device: dev, data: await encryptJSON(cfg.code, snap) });
+    // The code can have been edited while we were away; writing our snapshot
+    // now would put it in the wrong household's file under the wrong key.
+    if (cfg.code !== code) throw new Error('Household code changed mid-sync — nothing was written. Tap Sync now.');
+    await gasCall(conn, { action: 'put', household: hid, device: dev, data: await encryptJSON(code, snap) });
     cfg.lastSharedCount = Object.keys(snap.items).length;
     cfg.lastSync = Date.now();
-    cfg.lastError = null;
+    cfg.lastError = codeWarning;
     save();
-    onStatus('ok');
-    if (changed) document.dispatchEvent(new CustomEvent('stratos:changed'));
+    onStatus(codeWarning ? 'error:' + codeWarning : 'ok');
   } catch (e) {
-    cfg.lastError = e.message; save();
+    // Report first, save second: save() can itself throw on a full quota, and
+    // when it did, it took the error report down with it and the family saw
+    // nothing at all.
     console.warn('sync failed:', e.message);
     onStatus('error:' + e.message);
+    cfg.lastError = e.message;
+    try { save(); } catch (e2) { /* nothing left to do — the status is already out */ }
+    if (changed) document.dispatchEvent(new CustomEvent('stratos:changed'));
   } finally {
     syncing = false;
   }

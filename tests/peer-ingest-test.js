@@ -430,5 +430,96 @@ A.pruneSyncMaps();
 ok('a stale adoption record is pruned', !A.peerAdoptMap()['familymix:fm:kanel']);
 ok('...while a live one is kept', A.peerAdoptMap()['familymix:fm:yog'] === bound.id);
 
+// ---------- unsharing a peer row must not destroy it ----------
+T += 1000;
+A.ingestPeerItems('familymix', [item({ e: 'fm:kit', t: 'Test kit' })], T);
+const kit = A.state.items.find(i => i.externalId === 'fm:kit');
+A.updateItem(kit.id, { visibility: 'private', notes: 'clinic Tuesday' });
+const kitP = A.getItem(kit.id);
+ok('the person who unshared it can still see it', A.visibleTo(kitP, 'anna'));
+ok('...the other person cannot', !A.visibleTo(kitP, 'ebbe'));
+ok('...it is carried in HER private file, not orphaned',
+  !!A.syncSnapshot('private', 'anna').items[kit.id]);
+ok('...and it has left the shared file', !A.syncSnapshot('shared', 'anna').items[kit.id]);
+ok('...the notes she added survive', A.getItem(kit.id).notes === 'clinic Tuesday');
+
+// ---------- and the peer can never put it back ----------
+T += 1000;
+r = A.ingestPeerItems('familymix', [item({ e: 'fm:kit', t: 'Test kit', q: '2 stk' })], T);
+ok('a re-push is refused', r.skipped === 1 && A.getItem(kit.id).quantity == null);
+A.state.syncTomb.shared = {};                        // 90 days pass
+T += 1000;
+r = A.ingestPeerItems('familymix', [item({ e: 'fm:kit', t: 'Test kit', q: '2 stk' })], T);
+ok('still refused after the tombstone ages out', r.skipped === 1 && r.added === 0);
+ok('...because the refusal is durable, not on the 90-day clock',
+  !!A.peerRefusedMap()['familymix:fm:kit']);
+ok('...and it rides the shared snapshot to the other phone',
+  !!A.syncSnapshot('shared', 'anna').inboxRefused['familymix:fm:kit']);
+
+// ---------- a stale copy must not undo an unshare ----------
+const G = await import('/home/user/tracking/js/store.js?dev7'); G.state.profile = 'anna';
+const H2 = await import('/home/user/tracking/js/store.js?dev8'); H2.state.profile = 'ebbe';
+T += 1000;
+const joint = G.addItem({ title: 'Vin', scope: 'house', type: 'supply', category: 'groceries' });
+H2.applySync('shared', wire(G.syncSnapshot('shared', 'anna')));
+ok('both phones have it', !!H2.getItem(joint.id));
+T += 1000;
+G.updateItem(joint.id, { visibility: 'private', notes: 'private note' });   // Anna unshares on G
+T += 1000;
+H2.updateItem(joint.id, { quantity: '3 fl' });                             // Ebbe edits before hearing
+T += 1000;
+G.applySync('shared', wire(H2.syncSnapshot('shared', 'ebbe')));
+ok('a newer edit does NOT undo the unshare', G.getItem(joint.id).visibility === 'private');
+ok('...and does not overwrite the private content', G.getItem(joint.id).notes === 'private note');
+// but a genuine later re-share still wins
+T += 1000;
+H2.updateItem(joint.id, { visibility: 'shared' });
+T += 1000;
+G.applySync('shared', wire(H2.syncSnapshot('shared', 'ebbe')));
+ok('a genuinely later re-share is still accepted', G.getItem(joint.id).visibility === 'shared');
+
+// ---------- a peer may correct its own amount but not the family's ----------
+T += 1000;
+const hand2 = A.addItem({ title: 'Peber', scope: 'house', type: 'supply', category: 'groceries' });
+T += 1000;
+A.ingestPeerItems('familymix', [item({ e: 'fm:peber', t: 'Peber', q: '50 g' })], T);
+ok('the peer fills the blank amount', A.getItem(hand2.id).quantity === '50 g');
+T += 1000;
+A.ingestPeerItems('familymix', [item({ e: 'fm:peber', t: 'Peber', q: '100 g' })], T);
+ok('the peer can correct the value it put there', A.getItem(hand2.id).quantity === '100 g');
+A.updateItem(hand2.id, { quantity: '2 poser' });      // the family types their own
+T += 1000;
+A.ingestPeerItems('familymix', [item({ e: 'fm:peber', t: 'Peber', q: '100 g' })], T);
+ok("a standing re-send does not revert the family's own amount",
+  A.getItem(hand2.id).quantity === '2 poser');
+T += 1000;
+A.ingestPeerItems('familymix', [item({ e: 'fm:peber', t: 'Peber', q: '250 g' })], T);
+ok('...and neither does a fresh correction', A.getItem(hand2.id).quantity === '2 poser');
+
+// ---------- a future watermark must not park our own ----------
+const I2 = await import('/home/user/tracking/js/store.js?dev9'); I2.state.profile = 'anna';
+const ackBefore = I2.peerAckMap()['familymix'] || 0;
+T += 1000;
+I2.applySync('shared', { v: 1, at: T, items: {}, deleted: {}, inboxAck: { familymix: 4102444800000 } });
+ok('a future watermark is ignored, not clamped to now',
+  (I2.peerAckMap()['familymix'] || 0) === ackBefore);
+T += 1000;
+r = I2.ingestPeerItems('familymix', [item({ e: 'fm:live', t: 'Stadig muligt' })], T);
+ok('...so a live batch still lands', r.added === 1);
+T += 1000;
+I2.applySync('shared', { v: 1, at: T, items: {}, deleted: {}, inboxAck: { familymix: 4102444800000 } });
+T += 1000;
+r = I2.ingestPeerItems('familymix', [item({ e: 'fm:live2', t: 'Og igen' })], T);
+ok('...and again on the next merge (no moving-target re-park)', r.added === 1);
+
+// ---------- an import must not clone this phone's sync slot ----------
+const J2 = await import('/home/user/tracking/js/store.js?dev10'); J2.state.profile = 'anna';
+J2.syncConfig().deviceId = 'dORIGINAL';
+J2.saveState();
+const dump = J2.exportJSON();
+const K2 = await import('/home/user/tracking/js/store.js?dev11');
+K2.importJSON(dump);
+ok('an imported copy does not inherit the sync slot', !K2.syncConfig().deviceId);
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);
