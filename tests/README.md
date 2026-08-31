@@ -34,5 +34,13 @@ the code in the doc stops working, this fails.
 stored state loads, renders and syncs with none of the new maps present, and a
 peer batch lands on top of it correctly.
 
-The browser-level tests (escaping, the delivery card, the UI smoke pass) live
-outside the repo since they need Playwright.
+**`apps-panel-test.mjs`** — needs Playwright, so run it with
+`PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers node tests/apps-panel-test.mjs`.
+Drives the real UI against a fake household file and checks that Settings →
+connected apps tells the failure modes apart: no app writing, an app writing
+under the wrong household code, a batch missing `kind:"inbox"`, and a batch
+already taken in. Those four look identical from the outside — "I pressed sync
+and nothing happened" — so each has to name itself.
+
+The other browser-level tests (escaping, the delivery card, the UI smoke pass)
+live outside the repo.

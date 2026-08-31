@@ -104,6 +104,7 @@ export async function syncNow() {
     const store = got.store || {};
     let peers = 0, readable = 0;
     const inboxes = [];                       // ingested after the merge, see below
+    const apps = [];                          // one status line per connected app
     for (const [d, blob] of Object.entries(store)) {
       if (d === dev) continue;
       let remote = null;
@@ -111,7 +112,14 @@ export async function syncNow() {
       if (isPeerInboxSlot(d)) {
         // A peer app's inbox, not a phone: it must not count as "another
         // device linked", and it is ingested rather than merged.
+        //
+        // An inbox we cannot DECRYPT used to vanish here without a trace —
+        // not counted, not reported — which looks from the outside exactly
+        // like the app never wrote anything. It is the likeliest failure in
+        // the whole integration (the app is using a different household code),
+        // so it has to be the loudest.
         if (remote) inboxes.push([d, remote]);
+        else apps.push({ name: d.replace(/^inbox/i, '') || d, bad: 'unreadable' });
         continue;
       }
       peers++;
@@ -142,21 +150,37 @@ export async function syncNow() {
     // payload, which the peer writes itself and could set to anything.
     let ingested = 0, dropped = 0, reason = null;
     for (const [d, box] of inboxes) {
-      if (box.kind !== 'inbox') { reason = reason || d + ': not an inbox payload'; continue; }
+      const name = d.replace(/^inbox/i, '') || d;
+      if (box.kind !== 'inbox') {
+        apps.push({ name, bad: 'not an inbox payload (kind must be "inbox")' });
+        reason = reason || d + ': not an inbox payload';
+        continue;
+      }
       const r = ingestPeerItems(d, box.inbox, box.at);
       ingested += r.added + r.updated;
       dropped += r.dropped;
-      // Only a refusal worth acting on is worth reporting; "already consumed"
-      // is the normal state of a standing inbox on every sync after the first.
+      // Say what happened to THIS app's batch, every sync. "Already consumed"
+      // is the normal steady state and is not an error, but it still has to be
+      // visible: without it, an app that is working perfectly and an app that
+      // is not writing at all look identical from the Settings screen.
+      apps.push({
+        name,
+        n: r.added + r.updated,
+        sent: Array.isArray(box.inbox) ? box.inbox.length : 0,
+        at: Number(box.at) || 0,
+        bad: r.reason && r.reason !== 'already consumed' ? r.reason : null,
+        idle: r.reason === 'already consumed',
+      });
       if (r.reason && r.reason !== 'already consumed') reason = reason || d + ': ' + r.reason;
       if (r.added || r.updated) changed = true;
     }
+    cfg.peerApps = apps;
     if (ingested || dropped || reason) cfg.lastIngest = { at: Date.now(), n: ingested, dropped, reason };
     // Tombstones, seen-news keys and adoption records age out inside applySync,
     // which only runs for OTHER devices' slots — so a household with one phone
     // would never prune at all. Do it here, where every sync passes.
     pruneSyncMaps();
-    cfg.peerInboxes = inboxes.length;   // reported separately from real devices
+    cfg.peerInboxes = apps.length;      // reported separately from real devices
     cfg.peerCount = peers; // other devices in this household — 0 means you're alone (check the code matches!)
     // Announce what already landed BEFORE the push. The merge and the ingest
     // are done and saved by this point; if the upload then fails, the delivery

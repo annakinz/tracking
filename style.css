@@ -973,3 +973,15 @@ body.dump-focus #dumpText {
   background: var(--lilac); border-radius: 999px; padding: 1px 8px; white-space: nowrap;
 }
 .shop-item.done .shop-title .qty { background: none; color: var(--faint); }
+
+/* connected apps: per-app sync truth, so "nothing happened" has a reason */
+.apps-panel { margin: 10px 0 4px; }
+.app-row { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; margin-bottom: 6px;
+  border-radius: 12px; background: #F4F1EA; font-size: 13px; line-height: 1.45; }
+.app-row b { font-size: 13px; }
+.app-row span { color: #6C6459; }
+.app-row.ok { background: #E4F4EC; }
+.app-row.ok span { color: #1F8F68; }
+.app-row.bad { background: #FDE7DC; }
+.app-row.bad span { color: #B4432A; }
+.app-row code { background: #ffffffaa; padding: 0 4px; border-radius: 4px; }

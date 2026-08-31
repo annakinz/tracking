@@ -1417,6 +1417,7 @@ function syncSettingsHtml() {
       '<button id="sySyncNow" class="chip">Sync now</button>' +
       '<span class="hint" id="syStatus"></span></div>' +
     '<p class="hint' + (c.lastError ? ' sync-err' : '') + '" id="syDiag">' + syncDiag(c) + '</p>' +
+    peerAppsPanel(c) +
     '<p class="hint">No sign-in. A tiny Google Apps Script (runs as you, stores an <b>encrypted</b> file in <b>your</b> Drive) does the sync — see <b>apps-script.gs</b> in the repo for the 5-minute setup. Paste its <b>/exec</b> URL above, pick a household code, and use the <b>same code</b> on both phones. Your data is encrypted with that code before it leaves the phone.</p>'
   );
 }
@@ -1450,6 +1451,43 @@ function learnedRulesHtml() {
     '<span class="rule-field">' + esc(r.field === 'visibility' ? 'privacy' : r.field) + '</span></span>' +
     '<button class="chip small" data-ffield="' + esc(r.field) + '" data-fphrase="' + esc(r.phrase) + '">Forget</button></div>').join('') +
     '</div><div class="setrow"><button id="setForgetAll" class="chip danger">Forget all rules</button></div>';
+}
+
+// Per-app readout. "Nothing happened" is the hardest thing to debug in this
+// integration, because an app that never wrote and an app whose write we cannot
+// read look identical from the one-line summary. This says which it is.
+function peerAppsPanel(c) {
+  const apps = c.peerApps || [];
+  if (!apps.length) {
+    if (!c.lastSync) return '';
+    return '<div class="apps-panel"><div class="group-head">connected apps</div>' +
+      '<p class="hint">None found. Stratos looks for a slot whose name starts with ' +
+      '<code>inbox</code> in the household file — if the app has written one and it ' +
+      'still says none, it is writing to a different sync URL or a different ' +
+      'household code.</p></div>';
+  }
+  const when = (t) => (t ? new Date(t).toLocaleString() : 'no timestamp');
+  const row = (a) => {
+    if (a.bad === 'unreadable') {
+      return '<div class="app-row bad"><b>' + esc(a.name) + '</b>' +
+        '<span>⚠ Stratos can see this app’s data but cannot decrypt it. Its household ' +
+        'code does not match yours — check for a typo, and that it is using the code ' +
+        'exactly as shown above.</span></div>';
+    }
+    if (a.bad) {
+      return '<div class="app-row bad"><b>' + esc(a.name) + '</b><span>⚠ ' + esc(a.bad) + '</span></div>';
+    }
+    if (a.n) {
+      return '<div class="app-row ok"><b>' + esc(a.name) + '</b><span>✓ ' + a.n +
+        ' item' + (a.n === 1 ? '' : 's') + ' added just now · batch of ' + a.sent +
+        ' from ' + esc(when(a.at)) + '</span></div>';
+    }
+    return '<div class="app-row"><b>' + esc(a.name) + '</b><span>Batch of ' + a.sent +
+      ' from ' + esc(when(a.at)) + ' — already taken in' +
+      (a.sent ? '. Nothing new since.' : '. The app sent an empty list.') + '</span></div>';
+  };
+  return '<div class="apps-panel"><div class="group-head">connected apps</div>' +
+    apps.map(row).join('') + '</div>';
 }
 
 // One-line health readout: shared items pushed, last sync, and any error.
