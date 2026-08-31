@@ -105,10 +105,22 @@ export async function syncNow() {
     let peers = 0, readable = 0;
     const inboxes = [];                       // ingested after the merge, see below
     const apps = [];                          // one status line per connected app
+    // Every slot in the file, so "nothing arrived" can be answered with what
+    // DID arrive instead of a shrug.
+    const slots = [];
     for (const [d, blob] of Object.entries(store)) {
-      if (d === dev) continue;
       let remote = null;
       try { remote = await decryptJSON(code, blob); } catch (e) { /* wrong code for this slot */ }
+      slots.push({ name: d, mine: d === dev, readable: !!remote });
+      if (d === dev) continue;
+      // An inbox payload written to a slot that is NOT named inbox* is treated
+      // as another phone's snapshot and merged — which, with the empty items
+      // and deleted maps the contract requires, is a silent no-op. Catch it by
+      // its payload rather than its name and say so.
+      if (remote && remote.kind === 'inbox' && !isPeerInboxSlot(d)) {
+        apps.push({ name: d, bad: 'wrote to a slot named “' + d + '” — the slot name must start with “inbox”' });
+        continue;
+      }
       if (isPeerInboxSlot(d)) {
         // A peer app's inbox, not a phone: it must not count as "another
         // device linked", and it is ingested rather than merged.
@@ -175,6 +187,11 @@ export async function syncNow() {
       if (r.added || r.updated) changed = true;
     }
     cfg.peerApps = apps;
+    cfg.slots = slots;
+    // Not a secret (it is a hash of the code, and the script keys the file by
+    // it) — and it is the fastest way to settle "are we even writing to the
+    // same file?" with whoever is on the other end.
+    cfg.householdId = hid;
     if (ingested || dropped || reason) cfg.lastIngest = { at: Date.now(), n: ingested, dropped, reason };
     // Tombstones, seen-news keys and adoption records age out inside applySync,
     // which only runs for OTHER devices' slots — so a household with one phone

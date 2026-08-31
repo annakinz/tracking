@@ -1458,13 +1458,35 @@ function learnedRulesHtml() {
 // read look identical from the one-line summary. This says which it is.
 function peerAppsPanel(c) {
   const apps = c.peerApps || [];
+  const slots = c.slots || [];
   if (!apps.length) {
     if (!c.lastSync) return '';
+    // Show what IS in the household file. "None found" on its own leaves you
+    // with nowhere to look; the slot list settles it in one glance — if the
+    // only slots are this family's phones, the app is not writing to this file
+    // at all, and the cause is the URL or the code, not anything in Stratos.
+    const list = slots.length
+      ? '<div class="slotlist">' + slots.map(s =>
+          '<div class="slot-row"><code>' + esc(s.name) + '</code><span>' +
+          (s.mine ? 'this phone' : s.readable ? 'a phone in this household' : 'unreadable') +
+          '</span></div>').join('') + '</div>'
+      : '';
     return '<div class="apps-panel"><div class="group-head">connected apps</div>' +
       '<p class="hint">None found. Stratos looks for a slot whose name starts with ' +
-      '<code>inbox</code> in the household file — if the app has written one and it ' +
-      'still says none, it is writing to a different sync URL or a different ' +
-      'household code.</p></div>';
+      '<code>inbox</code>. Everything currently in your household file:</p>' + list +
+      '<p class="hint">If the app’s slot is not listed at all, its write never reached ' +
+      'this file — it is using a different sync URL, or a different household code ' +
+      '(the code decides which file it writes to, so a wrong code means a whole ' +
+      'separate file, not an unreadable slot). Ask it to confirm the <code>/exec</code> ' +
+      'URL it posts to, the household code it derives from, and that its ' +
+      '<code>put</code> came back <code>{"ok":true}</code>.</p>' +
+      (c.householdId
+        ? '<p class="hint">Your household file id is <code>' + esc(c.householdId) +
+          '</code>. The app derives this from the code by itself — if the one it ' +
+          'computes differs by a single character, it is writing to a different ' +
+          'file and you would see exactly this screen.</p>'
+        : '') +
+      '</div>';
   }
   const when = (t) => (t ? new Date(t).toLocaleString() : 'no timestamp');
   const row = (a) => {
