@@ -4,7 +4,7 @@ const DB_KEY = 'stratos.v1';
 
 // Build number — bump together with the service-worker CACHE in sw.js on
 // every deploy. Shown in Settings so you can confirm your phone is current.
-export const BUILD = '70';
+export const BUILD = '71';
 
 export const DIM_ORDER = ['priority', 'effort', 'difficulty', 'dread', 'restock'];
 
@@ -48,6 +48,7 @@ function touch(item) { if (item) item.updatedAt = Date.now(); }
 function tombFor(kind) { return (state.syncTomb || (state.syncTomb = { shared: {}, private: {} }))[kind]; }
 
 export let state = load();
+repairStockedOnList();
 
 function load() {
   try {
@@ -55,6 +56,29 @@ function load() {
     if (raw) return JSON.parse(raw);
   } catch (e) { /* corrupted -> start fresh */ }
   return freshState();
+}
+
+// One-time repair. Until now, re-adding a supply you had already bought left
+// the restock dial where buying put it — "Stocked" — so items sat on the
+// shopping list claiming the cupboard was full. addItem no longer does that,
+// but rows already in that state have to be corrected in place: "on the list"
+// and "fully stocked" is a contradiction, not a reading anyone chose.
+function repairStockedOnList() {
+  if (!state || state.fixStockedOnList) return;
+  const strata = state.dims?.restock?.strata;
+  if (!strata || !strata[3]) { state.fixStockedOnList = true; return; }
+  const idx = (it) => strata.findIndex(s => s.id === it.dims?.restock?.s);
+  let n = 0;
+  for (const it of state.items || []) {
+    if (it.status !== 'active') continue;
+    if (!(it.type === 'supply' || it.category === 'groceries' || it.category === 'supplies')) continue;
+    const i = idx(it);
+    if (i < 0 || i > 2) continue;                 // unsized, or already "Getting low" or worse
+    it.dims.restock = { s: strata[3].id, f: 0.5, at: Date.now() };
+    n++;
+  }
+  state.fixStockedOnList = true;
+  if (n) { try { save(); } catch (e) { /* repaired in memory either way */ } }
 }
 
 export let storageFull = false;
@@ -175,6 +199,17 @@ export function addItem(fields) {
     }
     if (fields.due) existing.due = fields.due;
     if (fields.source && !existing.source) existing.source = fields.source;
+    // Putting a supply back on the list MEANS "we need this again". Buying it
+    // snapped the restock dial to "Stocked" (the cupboard was full), and
+    // carrying that reading back onto the shopping list produced the nonsense
+    // of an item you are about to go and buy labelled as fully stocked. Reset
+    // it the same way a fresh add is sized — but never downgrade something the
+    // family has already marked as more urgent than that.
+    if (shoppableItem(existing) || existing.type === 'supply') {
+      const r = uOf(existing, 'restock');
+      const rs = state.dims.restock.strata[3];      // "Getting low"
+      if (rs && (r == null || r < 3)) existing.dims.restock = { s: rs.id, f: 0.5, at: now };
+    }
     // previously sized -> straight to active with its magnitudes; else re-size
     existing.status = Object.keys(existing.dims || {}).length ? 'active' : 'inbox';
     existing.doneAt = null;
