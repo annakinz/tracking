@@ -28,7 +28,10 @@ const linser = A.state.items.find(i => /linser/i.test(i.title));
 ok('quantity is a first-class field', linser.quantity === '400 g' && linser.quantityGrams === 400);
 ok('note becomes notes', linser.notes === 'Mon dinner');
 ok('forced shared + active + house', linser.visibility === 'shared' && linser.status === 'active' && linser.scope === 'house');
-ok('auto-sized to Getting low', Math.floor(A.uOf(linser, 'restock')) === 3);
+// A connected app has not looked in the cupboard, so it must not assert a
+// pantry level. Unsized is the honest reading; the line still reaches the list.
+ok('NOT given a restock reading', A.uOf(linser, 'restock') === null);
+ok('...but still active on the shopping list', linser.status === 'active' && linser.scope === 'house');
 ok('id is namespaced px_', linser.id.startsWith('px_'));
 ok('externalId retained', linser.externalId === 'fm:2026-08-24:linser');
 

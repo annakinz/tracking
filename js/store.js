@@ -4,7 +4,7 @@ const DB_KEY = 'stratos.v1';
 
 // Build number — bump together with the service-worker CACHE in sw.js on
 // every deploy. Shown in Settings so you can confirm your phone is current.
-export const BUILD = '71';
+export const BUILD = '72';
 
 export const DIM_ORDER = ['priority', 'effort', 'difficulty', 'dread', 'restock'];
 
@@ -1358,12 +1358,14 @@ export function ingestPeerItems(slot, list, batchAt) {
       dims: {},
       status: 'active',
     };
-    // supplies land at "Getting low" like any other, so they reach the shopping
-    // list at a sensible urgency instead of sitting unsized
-    if (item.type === 'supply') {
-      const rs = state.dims.restock.strata[3];
-      if (rs) item.dims.restock = { s: rs.id, f: 0.5, at: now };
-    }
+    // Deliberately NOT sized on the restock dial. That dial says how full the
+    // cupboard is, and a connected app has never looked in the cupboard — it is
+    // sending what a meal needs, which is a different question entirely.
+    // Stamping "Getting low" on a recipe ingredient states something nobody
+    // checked, and reads as wrong because it is. An unsized line still shows on
+    // the shopping list and still sorts by aisle; if the app sent a `neededOn`,
+    // that date drives its urgency honestly. The family can size it themselves
+    // the moment they actually know.
     state.items.push(item);
     res.added++;
   }

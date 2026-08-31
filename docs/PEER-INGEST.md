@@ -194,8 +194,14 @@ Ingested items are always `status:"active"`, `visibility:"shared"`,
 `parent:null`, and `createdBy:"app:<your slot, minus the inbox prefix>"` — e.g.
 `app:familymix`. The `app:` prefix is not cosmetic: it guarantees a peer byline
 can never equal a household member id, so naming your slot `inboxanna` gets you
-`app:anna`, not Anna. Supplies are auto-sized to *Getting low* so they reach the
-shopping list at a sensible urgency.
+`app:anna`, not Anna.
+
+Ingested items are deliberately **left unsized on the restock dial**. That dial
+records how full the family's cupboard is, and you have not looked in their
+cupboard — you are sending what a meal needs, which is a different question. An
+unsized line still appears on the shopping list and still sorts into its store
+aisle; if you send `neededOn`, that date is what drives its urgency. The family
+sizes it themselves when they actually know.
 
 **Types are checked, not coerced.** `quantityGrams` must be a JSON number;
 `text`, `quantity`, `category`, `source`, `note` and `neededOn` must be strings

@@ -98,7 +98,7 @@ function init() {
   refreshProfileChip();
   refreshBadge();
   renderNewsBlob(); // show any unreviewed changes from the other person
-  goto('lists'); // the app opens to your ranked list
+  goto('house'); // the app opens on House → Shop, the thing reached for most
   // once a day, a warm digest greets you; otherwise the ember takeover floats
   // whatever needs eyes before everything else
   if (!renderDigest()) renderTakeover();

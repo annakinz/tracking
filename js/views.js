@@ -794,7 +794,10 @@ export function initHouse() {
 }
 
 let houseSourceVal = 'all';
-let houseModeVal = 'list';   // 'list' | 'shop' (checklist grouped by store aisle)
+// 'shop' (checklist grouped by store aisle) | 'list' (house tasks).
+// Shop is the default because it is what the app is opened for most: the app
+// starts on House and lands here.
+let houseModeVal = 'shop';
 
 // what belongs on a shopping run (vs. house *tasks*)
 const shoppable = (i) => i.type === 'supply' || i.category === 'groceries' || i.category === 'supplies';
